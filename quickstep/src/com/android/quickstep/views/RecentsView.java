@@ -4957,8 +4957,8 @@ public abstract class RecentsView<
         // As the held app enters either target, adjacent pages return toward fullscreen size
         // at their own page positions. They leave through the side instead of disappearing.
         float width = Utilities.mapRange(retreat, mSmallWindowPreviewBounds.width(), displayWidth);
-        float left = Utilities.mapRange(retreat, mSmallWindowPreviewBounds.left(), 0f);
-        float top = Utilities.mapRange(retreat, mSmallWindowPreviewBounds.top(), 0f);
+        float left = Utilities.mapRange(retreat, mSmallWindowPreviewBounds.left, 0f);
+        float top = Utilities.mapRange(retreat, mSmallWindowPreviewBounds.top, 0f);
         float[] points = mSmallWindowPreviewPoints;
         points[0] = mSmallWindowPreviewSource.left;
         points[1] = mSmallWindowPreviewSource.top;
