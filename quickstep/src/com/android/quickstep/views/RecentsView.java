@@ -278,6 +278,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -782,6 +783,12 @@ public abstract class RecentsView<
     protected float mContentAlpha = 1;
     private float mSmallWindowPreviewAlpha = 1f;
     private boolean mSmallWindowPreviewActive;
+    private final RectF mSmallWindowPreviewSource = new RectF();
+    private final RectF mSmallWindowPreviewBounds = new RectF();
+    private final float[] mSmallWindowPreviewPoints = new float[8];
+    private final int[] mSmallWindowPreviewHostLocation = new int[2];
+    private float mSmallWindowFollowProgress;
+    private float mSmallWindowRecentsRetreat;
     @ViewDebug.ExportedProperty(category = "launcher")
     protected float mFullscreenProgress = 0;
     /**
@@ -1123,6 +1130,9 @@ public abstract class RecentsView<
 
     @Override
     protected void dispatchDraw(Canvas canvas) {
+        // Recents scale/scroll can change after the live surface callback in the same frame.
+        // Resolve the screen-space pose against the final parent matrix before drawing cards.
+        updateSmallWindowPreviewTransforms();
         // Draw overscroll
         if (mAllowOverScroll && (!mEdgeGlowRight.isFinished() || !mEdgeGlowLeft.isFinished())) {
             final int restoreCount = canvas.save();
@@ -2688,7 +2698,7 @@ public abstract class RecentsView<
                 && !dp.getDeviceProperties().isLandscape()
                 && getPagedOrientationHandler() == RecentsPagedOrientationHandler.PORTRAIT
                 && !showAsGrid() && !isSplitSelectionActive();
-        final float amount = getStackedTaskTransformAmount();
+        final float amount = getStackedTaskTransformAmount() * (1f - mSmallWindowFollowProgress);
         final int scroll = getPagedOrientationHandler().getPrimaryScroll(this);
         getTaskViews().forEachWithIndexInParent((index, task) ->
                 updateStackedTaskTransform(task, index, scroll, amount));
@@ -2699,7 +2709,7 @@ public abstract class RecentsView<
     private void updateOverviewBlur() {
         if (getDepthController() != null) {
             getDepthController().setStackedOverviewBlur(mOverviewStateEnabled
-                    ? getStackedTaskTransformAmount() * getVisibleContentAlpha() : 0f);
+                    ? getStackedTaskTransformAmount() * mContentAlpha : 0f);
         }
     }
 
@@ -2737,7 +2747,8 @@ public abstract class RecentsView<
         int index = indexOfChild(task);
         if (index < 0) return;
         updateStackedTaskTransform(task, index,
-                getPagedOrientationHandler().getPrimaryScroll(this), getStackedTaskTransformAmount());
+                getPagedOrientationHandler().getPrimaryScroll(this),
+                getStackedTaskTransformAmount() * (1f - mSmallWindowFollowProgress));
         if (task.isRunningTask() && mEnableDrawingLiveTile) {
             updateStackedLiveTileTransforms();
         }
@@ -4918,8 +4929,79 @@ public abstract class RecentsView<
         return mContentAlpha * mSmallWindowPreviewAlpha;
     }
 
+    /** Keep adjacent cards attached to the dragged app, then let them recede on selection. */
+    public void setSmallWindowPreviewTransform(RectF source, RectF bounds,
+            float followProgress, float retreat) {
+        if (source.isEmpty() || bounds.isEmpty()
+                || (followProgress <= 0f && mSmallWindowPreviewSource.isEmpty())) return;
+        mSmallWindowPreviewSource.set(source);
+        mSmallWindowPreviewBounds.set(bounds);
+        mSmallWindowRecentsRetreat = Utilities.boundToRange(retreat, 0f, 1f);
+        if (mSmallWindowFollowProgress != followProgress) {
+            mSmallWindowFollowProgress = followProgress;
+            // Held cards fan out into a row; restore the configured stack after the gesture.
+            updateStackedTaskTransforms();
+        }
+        // Several spring axes can update during one frame. Apply their final combined pose
+        // once in dispatchDraw instead of updating every TaskView for every axis callback.
+        invalidate();
+    }
+
+    private void updateSmallWindowPreviewTransforms() {
+        if (mSmallWindowPreviewSource.isEmpty() || getParent() == null) return;
+        final View host = mContainer.getDragLayer();
+        if (!isAttachedToWindow() || !Objects.equals(getWindowId(), host.getWindowId())) return;
+        host.getLocationOnScreen(mSmallWindowPreviewHostLocation);
+        float retreat = mSmallWindowRecentsRetreat;
+        float displayWidth = mContainer.getDeviceProfile().getDeviceProperties().getWidthPx();
+        // As the held app enters either target, adjacent pages return toward fullscreen size
+        // at their own page positions. They leave through the side instead of disappearing.
+        float width = Utilities.mapRange(retreat, mSmallWindowPreviewBounds.width(), displayWidth);
+        float left = Utilities.mapRange(retreat, mSmallWindowPreviewBounds.left(), 0f);
+        float top = Utilities.mapRange(retreat, mSmallWindowPreviewBounds.top(), 0f);
+        float[] points = mSmallWindowPreviewPoints;
+        points[0] = mSmallWindowPreviewSource.left;
+        points[1] = mSmallWindowPreviewSource.top;
+        points[2] = mSmallWindowPreviewSource.right;
+        points[3] = mSmallWindowPreviewSource.top;
+        points[4] = left;
+        points[5] = top;
+        points[6] = left + width;
+        points[7] = top;
+        for (int i = 0; i < points.length; i += 2) {
+            points[i] -= mSmallWindowPreviewHostLocation[0];
+            points[i + 1] -= mSmallWindowPreviewHostLocation[1];
+        }
+        Utilities.mapCoordInSelfToDescendant(this, host, points);
+        float sourceWidth = points[2] - points[0];
+        if (sourceWidth <= 0f) return;
+        float scale = (points[6] - points[4]) / sourceWidth;
+        float translationX = points[4] - points[0] * scale;
+        float translationY = points[5] - points[1] * scale;
+        for (TaskView task : getTaskViews()) {
+            if (task.isRunningTask()) {
+                task.setSwipePreviewTransform(1f, 0f, 0f);
+            } else {
+                task.setSwipePreviewTransform(scale, translationX, translationY);
+            }
+        }
+    }
+
+    public void clearSmallWindowPreviewTransform() {
+        if (mSmallWindowPreviewSource.isEmpty()) return;
+        mSmallWindowPreviewSource.setEmpty();
+        mSmallWindowPreviewBounds.setEmpty();
+        mSmallWindowFollowProgress = 0f;
+        mSmallWindowRecentsRetreat = 0f;
+        for (TaskView task : getTaskViews()) {
+            task.setSwipePreviewTransform(1f, 0f, 0f);
+        }
+        updateStackedTaskTransforms();
+    }
+
     /** Independent mask: the attach animation remains the owner of overview visibility. */
     public void setSmallWindowPreviewAlpha(boolean active, float alpha) {
+        if (!active) clearSmallWindowPreviewTransform();
         alpha = active ? Utilities.boundToRange(alpha, 0f, 1f) : 1f;
         if (mSmallWindowPreviewActive == active && mSmallWindowPreviewAlpha == alpha) return;
         mSmallWindowPreviewActive = active;

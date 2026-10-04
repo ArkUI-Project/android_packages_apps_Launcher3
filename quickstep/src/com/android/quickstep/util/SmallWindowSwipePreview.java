@@ -33,6 +33,7 @@ import com.android.launcher3.Utilities;
 import com.android.launcher3.anim.DesktopAnimationSettings;
 import com.android.quickstep.RemoteTargetGluer.RemoteTargetHandle;
 import com.android.quickstep.util.SurfaceTransaction.SurfaceProperties;
+import com.android.quickstep.views.RecentsView;
 
 import java.util.function.Consumer;
 
@@ -41,6 +42,15 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
     public static final int TARGET_NONE = 0;
     public static final int TARGET_SPLIT = 1;
     public static final int TARGET_SMALL_WINDOW = 2;
+
+    // Display-relative entry geometry. Hit testing uses these resting regions, never the
+    // animated blur bounds: moving an indicator must not move the goal underneath the finger.
+    private static final float ENTRY_LEFT = .14f;
+    private static final float ENTRY_RIGHT = .86f;
+    private static final float ENTRY_TOP = .14f;
+    private static final float ENTRY_REACH_X = .43f;
+    private static final float ENTRY_REACH_Y = .20f;
+    private static final float ENTRY_EXIT_DISTANCE = 1.12f;
 
     private final RemoteTargetHandle mHandle;
     private final RemoteAnimationTarget mTask;
@@ -60,6 +70,7 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
     private final SpringAnimation mWindowSpring;
     private final SpringAnimation mFollowXSpring;
     private final SpringAnimation mFollowYSpring;
+    private final SpringAnimation mFollowWidthSpring;
     private final Matrix mNormalMatrix = new Matrix();
     private final Matrix mMatrix = new Matrix();
     private final Matrix mReleaseMatrix = new Matrix();
@@ -72,6 +83,8 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
     private final RectF mFollowOrigin = new RectF();
     private final RectF mReleaseStart = new RectF();
     private final RectF mReleaseEnd = new RectF();
+    private final RectF mRecentsBounds = new RectF();
+    private final RectF mReleaseRecentsBounds = new RectF();
     private final Targets mTargets;
     private final int[] mHostLocation = new int[2];
     private final float[] mMatrixValues = new float[9];
@@ -84,8 +97,10 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
     private float mDragScale = 1f;
     private float mMaterialX;
     private float mMaterialY;
+    private float mMaterialWidth;
     private float mRequestedMaterialX;
     private float mRequestedMaterialY;
+    private float mRequestedMaterialWidth;
     private boolean mMaterialPositionInitialized;
     private float mVisibility;
     private float mNormalRadius;
@@ -95,7 +110,10 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
     private float mWindowReveal;
     private float mRequestedSplitReveal;
     private float mRequestedWindowReveal;
+    private float mSplitProximity;
+    private float mWindowProximity;
     private float mReleaseRecentsAlpha;
+    private float mReleaseRecentsRetreat;
     private boolean mBlurEnabled;
     private boolean mClosed;
     private boolean mTransformDetached;
@@ -131,8 +149,9 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
         mTargets = new Targets();
         mSplitSpring = createRevealSpring(true);
         mWindowSpring = createRevealSpring(false);
-        mFollowXSpring = createFollowSpring(true);
-        mFollowYSpring = createFollowSpring(false);
+        mFollowXSpring = createFollowSpring(0);
+        mFollowYSpring = createFollowSpring(1);
+        mFollowWidthSpring = createFollowSpring(2);
         overlayHost.getLocationOnScreen(mHostLocation);
         mTargets.setBounds(0, 0, overlayHost.getWidth(), overlayHost.getHeight());
         overlayHost.getOverlay().add(mTargets);
@@ -216,12 +235,42 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
             return mReleaseRecentsAlpha + ((mShowRecentsOnRelease ? 1f : 0f)
                     - mReleaseRecentsAlpha) * progress;
         }
-        // Hide siblings with the targets' reveal, before the app reaches either circle.
-        // Keep them hidden while dragging back; release restores overview from the held frame.
-        return 1f - Math.max(mFollowProgress, Math.max(mSplitReveal, mWindowReveal));
+        // Cards travel out of the viewport as a target unfolds. Keep them visible through
+        // that movement, and bring them back immediately when the finger leaves the region.
+        return 1f - clamp((getRecentsRetreat() - .85f) / .15f);
     }
 
-    /** The app follows the finger directly; only the target material has a settling response. */
+    private float getRecentsRetreat() {
+        if (mReleasing) {
+            return mReleaseRecentsRetreat + ((mShowRecentsOnRelease ? 0f : 1f)
+                    - mReleaseRecentsRetreat) * progress;
+        }
+        return Math.max(mSplitReveal, mWindowReveal);
+    }
+
+    /** Move every overview card in the same coordinate space as the live foreground app. */
+    public void updateRecentsView(RecentsView<?, ?> recents) {
+        updateRecentsBounds();
+        recents.setSmallWindowPreviewTransform(mNormal, mRecentsBounds,
+                mFollowProgress * (mReleasing ? 1f - progress : 1f), getRecentsRetreat());
+        recents.setSmallWindowPreviewAlpha(true, getRecentsAlpha());
+    }
+
+    private void updateRecentsBounds() {
+        if (mReleasing) {
+            interpolate(mReleaseRecentsBounds, mReleaseEnd, progress, mRecentsBounds);
+        } else if (!mCurrent.isEmpty() && mMaterialPositionInitialized) {
+            float width = Math.max(1f, mMaterialWidth);
+            float height = width * mCurrent.height() / mCurrent.width();
+            mRecentsBounds.set(mMaterialX - width / 2f, mMaterialY,
+                    mMaterialX + width / 2f, mMaterialY + height);
+            interpolate(mCurrent, mRecentsBounds, mFollowProgress, mRecentsBounds);
+        } else {
+            mRecentsBounds.set(mCurrent);
+        }
+    }
+
+    /** The app follows the finger directly; the target material and adjacent cards trail it. */
     public void updateGesture(float x, float y, float distance) {
         if (mReleasing || mClosed) return;
         mPointerX = x;
@@ -236,17 +285,25 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
         mDragScale = Math.max(AnimatorControllerWithResistance.PHONE_MIN_WINDOW_SCALE,
                 1f - Math.max(0f, distance) / mHeight
                         * AnimatorControllerWithResistance.PHONE_WINDOW_SHRINK_RATE);
-        float vertical = clamp((.66f - mPointerY / mHeight) / .26f);
-        float horizontal = clamp((Math.abs(mPointerX / mWidth - .5f) - .04f) / .22f);
-        // A straight swipe to the top must work without a pause or a sideways detour.
-        horizontal = Math.max(horizontal, clamp((.20f - mPointerY / mHeight) / .10f));
-        int target = mPointerX < mWidth * .5f ? TARGET_SPLIT : TARGET_SMALL_WINDOW;
-        progress = vertical * horizontal * mVisibility;
-        if (target == TARGET_SPLIT && !mCanSplit) progress = 0f;
-        mTarget = progress > 0f ? target : TARGET_NONE;
-        float reveal = clamp((progress - .30f) / .45f);
-        float splitReveal = mTarget == TARGET_SPLIT ? reveal : 0f;
-        float windowReveal = mTarget == TARGET_SMALL_WINDOW ? reveal : 0f;
+        float splitDistance = mCanSplit ? entryDistance(ENTRY_LEFT) : Float.MAX_VALUE;
+        float windowDistance = entryDistance(ENTRY_RIGHT);
+        mSplitProximity = mCanSplit ? smoothstep((1.5f - splitDistance) / .5f) : 0f;
+        mWindowProximity = smoothstep((1.5f - windowDistance) / .5f);
+        int nearest = splitDistance < windowDistance ? TARGET_SPLIT : TARGET_SMALL_WINDOW;
+        float nearestDistance = Math.min(splitDistance, windowDistance);
+        float selectedDistance = mTarget == TARGET_SPLIT ? splitDistance : windowDistance;
+        if (mVisibility < .5f) {
+            mTarget = TARGET_NONE;
+        } else if (nearestDistance <= 1f) {
+            mTarget = nearest;
+        } else if (mTarget == TARGET_NONE || selectedDistance > ENTRY_EXIT_DISTANCE) {
+            mTarget = TARGET_NONE;
+        }
+        // Progress remains the release contract with AbsSwipeUpHandler. Entry/exit is determined
+        // by the finger, so a fast crossing does not have to wait for the material spring.
+        progress = mTarget == TARGET_NONE ? 0f : 1f;
+        float splitReveal = mTarget == TARGET_SPLIT ? 1f : 0f;
+        float windowReveal = mTarget == TARGET_SMALL_WINDOW ? 1f : 0f;
         if (splitReveal != mRequestedSplitReveal) {
             mRequestedSplitReveal = splitReveal;
             mSplitSpring.animateToFinalPosition(splitReveal);
@@ -256,6 +313,14 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
             mWindowSpring.animateToFinalPosition(windowReveal);
         }
         mTargets.update();
+    }
+
+    private float entryDistance(float centerX) {
+        float dx = (mPointerX / mWidth - centerX) / ENTRY_REACH_X;
+        // The regions remain open toward the top edge, including a straight swipe without
+        // pausing in overview. Around the middle, the nearer entry wins (right on an exact tie).
+        float dy = Math.max(0f, mPointerY / mHeight - ENTRY_TOP) / ENTRY_REACH_Y;
+        return (float) Math.hypot(dx, dy);
     }
 
     private SpringAnimation createRevealSpring(boolean split) {
@@ -273,16 +338,20 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
         return animation;
     }
 
-    private SpringAnimation createFollowSpring(boolean horizontal) {
+    private SpringAnimation createFollowSpring(int axis) {
         SpringAnimation animation = new SpringAnimation(new FloatValueHolder(0f));
-        animation.setSpring(new SpringForce(0f).setStiffness(mMotion.positionStiffness)
-                .setDampingRatio(mMotion.positionDamping));
+        animation.setSpring(new SpringForce(0f)
+                .setStiffness(axis == 2 ? mMotion.sizeStiffness : mMotion.positionStiffness)
+                .setDampingRatio(axis == 2 ? mMotion.sizeDamping : mMotion.positionDamping));
+        if (axis == 2) animation.setMinValue(1f);
         animation.setMinimumVisibleChange(.5f);
         animation.addUpdateListener((anim, value, velocity) -> {
             if (mClosed || mReleasing || mTargetFade != null) return;
-            if (horizontal) mMaterialX = value;
-            else mMaterialY = value;
+            if (axis == 0) mMaterialX = value;
+            else if (axis == 1) mMaterialY = value;
+            else mMaterialWidth = value;
             mTargets.update();
+            mOnVisualUpdate.run();
         });
         return animation;
     }
@@ -290,12 +359,15 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
     private void updateMaterialPosition() {
         float x = mCurrent.centerX();
         float y = mCurrent.top;
+        float width = mCurrent.width();
         if (!mMaterialPositionInitialized) {
             mMaterialPositionInitialized = true;
             mRequestedMaterialX = mMaterialX = x;
             mRequestedMaterialY = mMaterialY = y;
+            mRequestedMaterialWidth = mMaterialWidth = width;
             mFollowXSpring.setStartValue(x);
             mFollowYSpring.setStartValue(y);
+            mFollowWidthSpring.setStartValue(width);
         }
         if (x != mRequestedMaterialX) {
             mRequestedMaterialX = x;
@@ -305,6 +377,10 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
             mRequestedMaterialY = y;
             mFollowYSpring.animateToFinalPosition(y);
         }
+        if (width != mRequestedMaterialWidth) {
+            mRequestedMaterialWidth = width;
+            mFollowWidthSpring.animateToFinalPosition(width);
+        }
     }
 
     private void stopTargetSprings() {
@@ -312,6 +388,7 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
         mWindowSpring.cancel();
         mFollowXSpring.cancel();
         mFollowYSpring.cancel();
+        mFollowWidthSpring.cancel();
     }
 
     @Override
@@ -367,11 +444,15 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
                 + (surfaceRadius(14 * mDensity) - mNormalRadius) * mFollowProgress;
         builder.setMatrix(mMatrix).setWindowCrop(mCrop).setCornerRadius(mRadius);
         mTargets.update();
+        mOnVisualUpdate.run();
     }
 
     /** Freeze the actual last frame before starting a release or cancellation animator. */
     public void beginRelease(boolean toSmallWindow, boolean showRecents) {
         mReleaseRecentsAlpha = getRecentsAlpha();
+        mReleaseRecentsRetreat = getRecentsRetreat();
+        updateRecentsBounds();
+        mReleaseRecentsBounds.set(mRecentsBounds);
         mReleasing = true;
         mToSmallWindow = toSmallWindow;
         mShowRecentsOnRelease = showRecents;
@@ -515,24 +596,25 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
             float visibility = mVisibility;
             float split = mSplitReveal;
             float small = mWindowReveal;
-            float circleRadius = mWidth * .055f;
-            float circleY = mHeight * .128f;
-            float padding = 5 * mDensity;
+            float circleRadius = mWidth * .06f;
+            float circleY = mHeight * .115f;
+            float padding = .025f * mWidth;
             if (mCanSplit) {
-                setFollowingCircle(mWidth * .14f, circleY, circleRadius, visibility);
-                // The expanded split area also moves toward the held app, within the top stage.
+                float entryRadius = circleRadius * (1f + .4f * mSplitProximity)
+                        * (1f - .4f * small);
+                setFollowingCircle(mWidth * .11f, circleY, entryRadius,
+                        mSplitProximity, visibility);
+                // The top stage keeps its screen-relative size while its material follows
+                // the held card. This continues during a hold and reverses on withdrawal.
                 float splitWidth = .89f * mWidth;
-                float splitHeight = .415f * mHeight;
-                float splitLeft = Utilities.boundToRange(.055f * mWidth
-                        + (mMaterialX - mWidth / 2f) * .22f, .02f * mWidth, .09f * mWidth);
-                float splitTop = Utilities.boundToRange(.065f * mHeight
-                        + (mMaterialY - .14f * mHeight) * .32f,
-                        .035f * mHeight, .16f * mHeight);
+                float splitHeight = .44f * mHeight;
+                float splitLeft = .055f * mWidth + (mMaterialX - mWidth / 2f) * .08f;
+                float splitTop = .045f * mHeight + (mMaterialY - .12f * mHeight) * .18f;
                 mSplit.set(splitLeft, splitTop,
                         splitLeft + splitWidth, splitTop + splitHeight);
                 interpolate(mCircle, mSplit, split, mBounds);
-                float radius = circleRadius + (26 * mDensity - circleRadius) * split;
-                float alpha = visibility * (1f - clamp((small - .8f) / .2f));
+                float radius = entryRadius + (.11f * mWidth - entryRadius) * split;
+                float alpha = visibility * (1f - .7f * small);
                 mLeft.update(mBounds, radius, alpha);
                 mSplitIconX = mBounds.centerX();
                 mSplitIconY = mCircle.centerY()
@@ -542,32 +624,31 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
 
             // The circle starts following before it unfolds. Its spring trails the live app,
             // so fast motion can pull the app ahead and the blur gradually catches and wraps it.
-            float grow = clamp(small / .35f);
-            float wrap = clamp((small - .25f) / .75f);
-            float radius = circleRadius * (1f + .4f * grow);
-            setFollowingCircle(mWidth * .86f, circleY, radius, visibility);
-            mEnvelope.set(mCurrent.isEmpty() ? mCircle : mCurrent);
-            if (!mCurrent.isEmpty()) {
-                mEnvelope.offset(mMaterialX - mCurrent.centerX(), mMaterialY - mCurrent.top);
-            }
+            float wrap = smoothstep(small);
+            float radius = circleRadius * (1f + .4f * mWindowProximity)
+                    * (1f - .4f * split);
+            setFollowingCircle(mWidth * .89f, circleY, radius,
+                    mWindowProximity, visibility);
+            updateRecentsBounds();
+            mEnvelope.set(mRecentsBounds.isEmpty() ? mCircle : mRecentsBounds);
             mEnvelope.inset(-padding, -padding);
             interpolate(mCircle, mEnvelope, wrap, mBounds);
             radius += (14 * mDensity + padding - radius) * wrap;
             mRight.update(mBounds, radius,
-                    visibility * (1f - clamp((split - .6f) / .4f)));
+                    visibility * (1f - .7f * split));
             mWindowIconAlpha = mRight.alpha * (1f - clamp((small - .15f) / .3f));
             mWindowIconX = mCircle.centerX();
             mWindowIconY = mCircle.centerY();
             invalidateSelf();
         }
 
-        private void setFollowingCircle(float x, float y, float radius, float visibility) {
+        private void setFollowingCircle(float x, float y, float radius,
+                float proximity, float visibility) {
             float dx = mMaterialX - x;
-            float dy = mMaterialY + radius - y;
-            float proximity = 1f - clamp((float) Math.hypot(
-                    dx / (.75f * mWidth), dy / (.45f * mHeight)));
-            float follow = visibility * (.18f + .32f * smoothstep(proximity));
-            setCircle(mCircle, x + dx * follow, y + dy * follow, radius);
+            float dy = mMaterialY - radius * .5f - y;
+            float followX = visibility * (.10f + .16f * proximity);
+            float followY = visibility * .65f;
+            setCircle(mCircle, x + dx * followX, y + dy * followY, radius);
         }
 
         private void updateRelease() {
@@ -578,7 +659,7 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
             mBounds.set(mReleaseEnvelope);
             float radius = mReleaseEnvelopeRadius;
             if (mReleasing && mToSmallWindow) {
-                float padding = 5 * mDensity;
+                float padding = .025f * mWidth;
                 mEnvelope.set(mCurrent);
                 mEnvelope.inset(-padding, -padding);
                 interpolate(mReleaseEnvelope, mEnvelope, progress, mBounds);

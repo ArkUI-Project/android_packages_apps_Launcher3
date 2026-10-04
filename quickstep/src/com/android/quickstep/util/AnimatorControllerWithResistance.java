@@ -48,7 +48,7 @@ public class AnimatorControllerWithResistance {
 
     // Display-relative geometry from the portrait app/overview gesture reference.
     public static final float PHONE_MIN_WINDOW_SCALE = .245f;
-    public static final float PHONE_WINDOW_SHRINK_RATE = 1.35f;
+    public static final float PHONE_WINDOW_SHRINK_RATE = 1.1f;
 
     private enum RecentsResistanceParams {
         FROM_APP(0.75f, 0.5f, 1f, false),

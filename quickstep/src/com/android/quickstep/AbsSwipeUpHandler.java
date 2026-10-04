@@ -926,7 +926,8 @@ public abstract class AbsSwipeUpHandler<
             // The window is going away so make sure recents is always visible in this case.
             recentsAttachedToAppWindow = true;
         } else {
-            recentsAttachedToAppWindow = mHasMotionEverBeenPaused || mIsLikelyToStartNewTask;
+            recentsAttachedToAppWindow = mSmallWindowSwipe != null
+                    || mHasMotionEverBeenPaused || mIsLikelyToStartNewTask;
         }
 
         if (!isGestureMode) {
@@ -1102,15 +1103,15 @@ public abstract class AbsSwipeUpHandler<
         mSmallWindowSwipe = new com.android.quickstep.util.SmallWindowSwipePreview(mContext,
                 mRemoteTargetHandles[0], target, mContainer.getDragLayer(), canSplit,
                 this::updateSmallWindowContentAlpha);
+        // Adjacent cards accompany the upward drag before the finger pauses in overview.
+        maybeUpdateRecentsAttachedState(true /* animate */);
         updateSmallWindowContentAlpha();
     }
 
     private void updateSmallWindowContentAlpha() {
         if (mRecentsView == null) return;
         if (mSmallWindowSwipe != null) {
-            // Target selection owns the foreground. A motion pause must not expose sibling
-            // cards behind the floating app while split/small-window targets are visible.
-            mRecentsView.setSmallWindowPreviewAlpha(true, mSmallWindowSwipe.getRecentsAlpha());
+            mSmallWindowSwipe.updateRecentsView(mRecentsView);
         } else if (mAppAnimationHandoff != null) {
             GestureEndTarget endTarget = mGestureState.getEndTarget();
             boolean showOverview = endTarget == RECENTS || endTarget == NEW_TASK
@@ -1134,6 +1135,7 @@ public abstract class AbsSwipeUpHandler<
                 // Keep siblings hidden through the return animation. Gesture cleanup removes
                 // the mask after the underlying overview state has reached Home.
                 mRecentsView.setSmallWindowPreviewAlpha(fadeTargets, fadeTargets ? 0f : 1f);
+                mRecentsView.clearSmallWindowPreviewTransform();
                 if (mGestureState.getEndTarget() == null) {
                     mRecentsView.setEnableDrawingLiveTile(mSmallWindowWasDrawingLiveTile);
                 }
@@ -1154,7 +1156,7 @@ public abstract class AbsSwipeUpHandler<
         mSmallWindowLastDistance = Math.max(0f, -displacement);
         if (mSmallWindowSwipe == null && mGestureState.getEndTarget() == null
                 && mSmallWindowLastDistance
-                        >= mContext.getResources().getDisplayMetrics().heightPixels * .20f) {
+                        >= mContext.getResources().getDisplayMetrics().heightPixels * .12f) {
             armSmallWindowSwipe();
         }
         if (mSmallWindowSwipe != null && mGestureState.getEndTarget() == null) {

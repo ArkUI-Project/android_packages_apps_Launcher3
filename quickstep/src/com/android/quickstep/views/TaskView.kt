@@ -443,6 +443,22 @@ constructor(
     var stackAlpha = 1f
         private set
 
+    private var swipePreviewScale = 1f
+    private var swipePreviewTranslationX = 0f
+    private var swipePreviewTranslationY = 0f
+
+    /** An affine transform in RecentsView's content coordinates, after the normal card pose. */
+    fun setSwipePreviewTransform(scale: Float, translationX: Float, translationY: Float) {
+        if (swipePreviewScale == scale && swipePreviewTranslationX == translationX &&
+            swipePreviewTranslationY == translationY) return
+        swipePreviewScale = scale
+        swipePreviewTranslationX = translationX
+        swipePreviewTranslationY = translationY
+        applyScale()
+        applyTranslationX()
+        applyTranslationY()
+    }
+
     /** Compose with dismissal, grid and fullscreen transforms instead of overwriting them. */
     fun setStackTransform(scale: Float, translation: Float, alpha: Float) {
         if (stackScale == scale && stackTranslationX == translation && stackAlpha == alpha) return
@@ -748,6 +764,11 @@ constructor(
     override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
         super.onLayout(changed, left, top, right, bottom)
         updatePivots()
+        if (swipePreviewScale != 1f || swipePreviewTranslationX != 0f ||
+            swipePreviewTranslationY != 0f) {
+            applyTranslationX()
+            applyTranslationY()
+        }
         systemGestureExclusionRectList[0].apply {
             this.right = width
             this.bottom = height
@@ -2038,7 +2059,7 @@ constructor(
     fun getSizeAdjustment(fullscreenEnabled: Boolean) = if (fullscreenEnabled) nonGridScale else 1f
 
     private fun applyScale() {
-        val scale = persistentScale * dismissScale * stackScale *
+        val scale = persistentScale * dismissScale * stackScale * swipePreviewScale *
             Utilities.mapRange(modalness, 1f, modalScale)
         scaleX = scale
         scaleY = scale
@@ -2046,7 +2067,7 @@ constructor(
     }
 
     private fun applyTranslationX() {
-        translationX =
+        val baseTranslation =
             dismissTranslationX +
                 taskOffsetTranslationX +
                 taskResistanceTranslationX +
@@ -2054,15 +2075,19 @@ constructor(
                 gridEndTranslationX +
                 stackTranslationX +
                 persistentTranslationX
+        translationX = baseTranslation * swipePreviewScale +
+            (swipePreviewScale - 1f) * (left + pivotX) + swipePreviewTranslationX
     }
 
     private fun applyTranslationY() {
-        translationY =
+        val baseTranslation =
             dismissTranslationY +
                 taskOffsetTranslationY +
                 taskResistanceTranslationY +
                 splitSelectTranslationY +
                 persistentTranslationY
+        translationY = baseTranslation * swipePreviewScale +
+            (swipePreviewScale - 1f) * (top + pivotY) + swipePreviewTranslationY
     }
 
     private fun onGridProgressChanged() {
@@ -2123,6 +2148,7 @@ constructor(
     }
 
     fun resetPersistentViewTransforms() {
+        setSwipePreviewTransform(1f, 0f, 0f)
         setStackTransform(1f, 0f, 1f)
         nonGridTranslationX = 0f
         gridTranslationX = 0f
