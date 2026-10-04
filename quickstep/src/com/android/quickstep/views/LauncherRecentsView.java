@@ -91,6 +91,7 @@ public class LauncherRecentsView extends RecentsView<QuickstepLauncher, Launcher
 
     @Override
     protected Unit onTaskLaunchAnimationEnd(boolean success) {
+        if (!success) notifySystemBarFollowAnimation(false);
         if (success) {
             getStateManager().moveToRestState();
         } else {
@@ -129,6 +130,7 @@ public class LauncherRecentsView extends RecentsView<QuickstepLauncher, Launcher
 
     @Override
     public void onStateTransitionStart(LauncherState toState) {
+        notifySystemBarFollowAnimation(true);
         setOverviewStateEnabled(toState.isRecentsViewVisible);
 
         if (enableGridOnlyOverview()) {
@@ -159,6 +161,9 @@ public class LauncherRecentsView extends RecentsView<QuickstepLauncher, Launcher
 
     @Override
     public void onStateTransitionComplete(LauncherState finalState) {
+        if (finalState.isRecentsViewVisible && finalState.getOverviewFullscreenProgress() == 0) {
+            notifySystemBarFollowAnimation(false);
+        }
         DesktopVisibilityController.INSTANCE.get(mContainer).onLauncherStateChanged(
                 mContainer.getDisplayId(), finalState);
         if (enableGridOnlyOverview()) {

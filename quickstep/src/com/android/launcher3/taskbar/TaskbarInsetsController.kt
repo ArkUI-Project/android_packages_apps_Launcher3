@@ -15,6 +15,7 @@
  */
 package com.android.launcher3.taskbar
 
+import android.database.ContentObserver
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Insets
@@ -23,6 +24,9 @@ import android.graphics.Rect
 import android.graphics.Region
 import android.os.Binder
 import android.os.IBinder
+import android.os.Parcel
+import android.os.UserHandle
+import android.provider.Settings
 import android.view.DisplayInfo
 import android.view.Gravity
 import android.view.InsetsFrameProvider
@@ -47,6 +51,7 @@ import androidx.annotation.VisibleForTesting
 import androidx.core.graphics.toRegion
 import com.android.app.tracing.traceSection
 import com.android.internal.policy.GestureNavigationSettingsObserver
+import com.android.internal.arkui.SystemBarFollowSettings
 import com.android.launcher3.DeviceProfile
 import com.android.launcher3.anim.AlphaUpdateListener
 import com.android.launcher3.taskbar.TaskbarControllers.LoggableTaskbarController
@@ -79,6 +84,19 @@ class TaskbarInsetsController(val context: TaskbarActivityContext) : LoggableTas
     // The touchableRegion we will set unless some other state takes precedence.
     private val defaultTouchableRegion: Region = Region()
     private val insetsOwner: IBinder = Binder()
+    private var followNavigation = false
+    private val followObserver = object : ContentObserver(context.mainThreadHandler) {
+        override fun onChange(selfChange: Boolean) {
+            updateSystemBarFollow()
+            onTaskbarOrBubblebarWindowHeightOrInsetsChanged()
+        }
+    }
+
+    private fun updateSystemBarFollow() {
+        followNavigation = context.isPrimaryDisplay && context.isPhoneGestureNavMode &&
+            SystemBarFollowSettings.navigationEnabled(context, UserHandle.myUserId())
+        controllers.stashedHandleViewController.setFollowAnimationOnly(followNavigation)
+    }
     private val deviceProfileChangeListener = { _: DeviceProfile ->
         onTaskbarOrBubblebarWindowHeightOrInsetsChanged()
     }
@@ -98,6 +116,12 @@ class TaskbarInsetsController(val context: TaskbarActivityContext) : LoggableTas
     fun init(controllers: TaskbarControllers) {
         this.controllers = controllers
         windowLayoutParams = context.windowLayoutParams
+        context.contentResolver.registerContentObserver(
+            Settings.System.getUriFor(Settings.System.ARKUI_NAVIGATION_BAR_FOLLOW),
+            false,
+            followObserver,
+        )
+        updateSystemBarFollow()
         onTaskbarOrBubblebarWindowHeightOrInsetsChanged()
 
         context.addOnDeviceProfileChangeListener(deviceProfileChangeListener)
@@ -105,6 +129,7 @@ class TaskbarInsetsController(val context: TaskbarActivityContext) : LoggableTas
     }
 
     fun onDestroy() {
+        context.contentResolver.unregisterContentObserver(followObserver)
         context.removeOnDeviceProfileChangeListener(deviceProfileChangeListener)
         gestureNavSettingsObserver.unregister()
     }
@@ -195,15 +220,26 @@ class TaskbarInsetsController(val context: TaskbarActivityContext) : LoggableTas
         providedInsets: Array<InsetsFrameProvider>,
         insetsRoundedCornerFlag: Int,
     ): Array<InsetsFrameProvider> {
+        // LayoutParams.copyFrom retains this array. Mutating shared providers in place makes
+        // both the previous and new params equal, so WindowManager never receives inset changes.
+        // Preserve their stable IDs, but publish a separate value snapshot for every update.
+        val parcel = Parcel.obtain()
+        val updatedInsets = try {
+            parcel.writeTypedArray(providedInsets, 0)
+            parcel.setDataPosition(0)
+            parcel.createTypedArray(InsetsFrameProvider.CREATOR)!!
+        } finally {
+            parcel.recycle()
+        }
         val navBarsFlag =
             (if (context.isGestureNav || !context.isPrimaryDisplay) FLAG_SUPPRESS_SCRIM else 0) or
                 insetsRoundedCornerFlag
-        for (provider in providedInsets) {
+        for (provider in updatedInsets) {
             if (provider.type == navigationBars()) {
                 provider.setFlags(navBarsFlag, FLAG_SUPPRESS_SCRIM or FLAG_INSETS_ROUNDED_CORNER)
             }
         }
-        return providedInsets
+        return updatedInsets
     }
 
     /**
@@ -237,7 +273,8 @@ class TaskbarInsetsController(val context: TaskbarActivityContext) : LoggableTas
         val tappableHeight = controllers.taskbarStashController.tappableHeightToReportToApps
         val res = context.resources
         if (provider.type == navigationBars()) {
-            provider.insetsSize = getInsetsForGravityWithCutout(contentHeight, gravity, endRotation)
+            provider.insetsSize = if (followNavigation) Insets.NONE
+                else getInsetsForGravityWithCutout(contentHeight, gravity, endRotation)
         } else if (provider.type == mandatorySystemGestures()) {
             if (context.isThreeButtonNav) {
                 provider.insetsSize =

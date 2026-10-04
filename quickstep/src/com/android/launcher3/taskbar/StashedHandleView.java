@@ -23,6 +23,7 @@ import android.animation.ObjectAnimator;
 import android.animation.PropertyValuesHolder;
 import android.annotation.Nullable;
 import android.content.Context;
+import android.graphics.Canvas;
 import android.graphics.Rect;
 import android.util.AttributeSet;
 import android.view.View;
@@ -48,6 +49,19 @@ public class StashedHandleView extends View {
 
     private @Nullable ObjectAnimator mColorChangeAnim;
     private Boolean mIsRegionDark;
+    private boolean mFollowAnimationOnly;
+
+    /** Suppress only pixels; gesture consumers still use this view's bounds and visibility. */
+    public void setFollowAnimationOnly(boolean follow) {
+        if (mFollowAnimationOnly == follow) return;
+        mFollowAnimationOnly = follow;
+        invalidate();
+    }
+
+    @Override
+    public void draw(Canvas canvas) {
+        if (!mFollowAnimationOnly) super.draw(canvas);
+    }
 
     public StashedHandleView(Context context) {
         this(context, null);

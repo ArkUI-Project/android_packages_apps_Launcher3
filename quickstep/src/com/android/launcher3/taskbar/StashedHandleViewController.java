@@ -114,6 +114,7 @@ public class StashedHandleViewController implements TaskbarControllers.LoggableT
     private boolean mIsLumaSamplingEnabled;
     private boolean mIsAppTransitionPending;
     private boolean mTaskbarHidden;
+    private boolean mFollowAnimationOnly;
 
     private float mTranslationYForSwipe;
     private float mTranslationYForStash;
@@ -321,7 +322,14 @@ public class StashedHandleViewController implements TaskbarControllers.LoggableT
     }
 
     private boolean shouldSample() {
-        return mIsStashed && mIsLumaSamplingEnabled && !mIsAppTransitionPending;
+        return mIsStashed && mIsLumaSamplingEnabled && !mIsAppTransitionPending
+                && !mFollowAnimationOnly;
+    }
+
+    public void setFollowAnimationOnly(boolean follow) {
+        mFollowAnimationOnly = follow;
+        mStashedHandleView.setFollowAnimationOnly(follow);
+        updateSamplingState();
     }
 
     protected void updateStashedHandleHintScale() {

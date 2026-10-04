@@ -6183,6 +6183,13 @@ public abstract class RecentsView<
         mPendingAnimation = null;
     }
 
+    protected void notifySystemBarFollowAnimation(boolean running) {
+        if (getContext().getDisplayId() != android.view.Display.DEFAULT_DISPLAY) return;
+        getContext().sendBroadcast(new android.content.Intent(
+                "org.arkui.action.SYSTEM_BAR_FOLLOW_MOTION").setPackage("android")
+                .putExtra("running", running));
+    }
+
     public PendingAnimation createTaskLaunchAnimation(
             TaskView taskView, long duration, Interpolator interpolator) {
         if (FeatureFlags.IS_STUDIO_BUILD && mPendingAnimation != null) {
@@ -6192,6 +6199,8 @@ public abstract class RecentsView<
         if (!hasTaskViews()) {
             return new PendingAnimation(duration);
         }
+
+        notifySystemBarFollowAnimation(true);
 
         // When swiping down from overview to tasks, ensures the snapped page's scroll maintain
         // invariant between quick switch and overview, to ensure a smooth animation transition.
