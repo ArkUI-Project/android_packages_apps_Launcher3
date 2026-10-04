@@ -1810,7 +1810,7 @@ public abstract class AbsSwipeUpHandler<
                 velocityPxPerMs, endVelocityPxPerMs, isFling, isCancel, horizontalTouchSlopPassed);
         if (endTarget != HOME && !mSmallWindowCommitted && mSplitTaskFromSwipe == -1
                 && mSmallWindowSwipe != null
-                && mSmallWindowSwipe.progress > 0f) {
+                && mSmallWindowSwipe.hasActiveTransform()) {
             mSmallWindowSettling = true;
             mSmallWindowSwipe.beginRelease(false, endTarget == RECENTS);
             final ValueAnimator rollback = ValueAnimator.ofFloat(0f, 1f);
