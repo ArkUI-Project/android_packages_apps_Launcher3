@@ -1,4 +1,5 @@
 /*
+ * Modified by the ArkUI Project in 2026 for atomic launch-to-gesture handoff.
  * Copyright (C) 2019 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -66,6 +67,15 @@ public class RecentsAnimationCallbacks implements
 
     public RecentsAnimationCallbacks(RecentsViewContainer container) {
         mIsContainerRecentsWindowManager = container instanceof RecentsWindowManager;
+    }
+
+    /** Only a gesture handler can provide a transformed first frame to Shell. */
+    @UiThread
+    public boolean canProvideStartFrame() {
+        for (RecentsAnimationListener listener : mListeners) {
+            if (listener instanceof AbsSwipeUpHandler) return true;
+        }
+        return false;
     }
 
     @UiThread
@@ -136,10 +146,17 @@ public class RecentsAnimationCallbacks implements
                     wallpaperTargets, nonAppTargets, homeContentInsets, extras);
 
             Utilities.postAsyncCallback(MAIN_EXECUTOR.getHandler(), () -> {
+                if (mCancelled) {
+                    mController.finishAnimationToApp(new ActiveGestureLog.CompoundString(
+                            "RecentsAnimationCallback.onAnimationStart: canceled before dispatch"));
+                    targets.release();
+                    return;
+                }
                 ActiveGestureProtoLogProxy.logOnRecentsAnimationStart(targets.apps.length);
                 for (RecentsAnimationListener listener : getListeners()) {
                     listener.onRecentsAnimationStart(mController, targets, transitionInfo);
                 }
+                targets.finishStartHandoff();
             });
         }
     }

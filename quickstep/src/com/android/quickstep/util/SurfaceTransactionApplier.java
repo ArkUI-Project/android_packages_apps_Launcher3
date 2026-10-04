@@ -43,6 +43,7 @@ public class SurfaceTransactionApplier extends ReleaseCheck {
     private ViewRootImpl mTargetViewRootImpl;
 
     private int mLastSequenceNumber = 0;
+    private volatile int mTransactionGeneration;
 
     /**
      * @param targetView The view in the surface that acts as synchronization anchor.
@@ -85,6 +86,11 @@ public class SurfaceTransactionApplier extends ReleaseCheck {
         return false;
     }
 
+    /** Discard queued frames when another animator takes ownership of the same surfaces. */
+    public void cancelPendingTransactions() {
+        mTransactionGeneration++;
+    }
+
     /**
      * Schedules applying surface parameters on the next frame.
      *
@@ -104,8 +110,15 @@ public class SurfaceTransactionApplier extends ReleaseCheck {
 
         mLastSequenceNumber++;
         final int toApplySeqNo = mLastSequenceNumber;
+        final int generation = mTransactionGeneration;
         setCanRelease(false);
         mTargetViewRootImpl.registerRtFrameCallback(frame -> {
+            if (generation != mTransactionGeneration) {
+                t.close();
+                Message.obtain(mApplyHandler, MSG_UPDATE_SEQUENCE_NUMBER, toApplySeqNo, 0)
+                        .sendToTarget();
+                return;
+            }
             if (mBarrierSurfaceControl == null || !mBarrierSurfaceControl.isValid()) {
                 // Won't sync with anything, but we still need to apply the transaction
                 t.apply();

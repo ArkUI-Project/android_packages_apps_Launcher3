@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2019 The Android Open Source Project
+ * Modified by the ArkUI Project in 2026 to carry interrupted app launch geometry into gestures.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,12 +26,15 @@ import static com.android.launcher3.logging.StatsLogManager.LAUNCHER_STATE_BACKG
 import static com.android.launcher3.logging.StatsLogManager.LAUNCHER_STATE_HOME;
 import static com.android.launcher3.logging.StatsLogManager.LAUNCHER_STATE_OVERVIEW;
 import static com.android.launcher3.logging.StatsLogManager.LAUNCHER_STATE_UNCHANGED;
+import static com.android.launcher3.statehandlers.DesktopVisibilityController.INACTIVE_DESK_ID;
 import static com.android.quickstep.MultiStateCallback.DEBUG_STATES;
 import static com.android.quickstep.util.ActiveGestureErrorDetector.GestureEvent.INCORRECT_HOME_GESTURE_REQUEST;
 import static com.android.quickstep.util.ActiveGestureErrorDetector.GestureEvent.SET_END_TARGET_ALL_APPS;
 import static com.android.quickstep.util.ActiveGestureErrorDetector.GestureEvent.SET_END_TARGET_HOME;
 import static com.android.quickstep.util.ActiveGestureErrorDetector.GestureEvent.SET_END_TARGET_NEW_TASK;
 
+import android.app.TaskInfo;
+import android.content.Context;
 import android.content.Intent;
 import android.os.SystemClock;
 import android.view.Display;
@@ -48,13 +52,16 @@ import com.android.quickstep.TopTaskTracker.CachedTaskInfo;
 import com.android.quickstep.util.ActiveGestureErrorDetector;
 import com.android.quickstep.util.ActiveGestureLog;
 import com.android.quickstep.util.ActiveGestureProtoLogProxy;
+import com.android.quickstep.util.AppWindowAnimationState;
 import com.android.quickstep.views.RecentsViewContainer;
 import com.android.quickstep.window.RecentsWindowManager;
 import com.android.systemui.shared.recents.model.ThumbnailData;
+import com.android.wm.shell.shared.GroupedTaskInfo;
 
 import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -186,6 +193,7 @@ public class GestureState implements RecentsAnimationCallbacks.RecentsAnimationL
 
     private TrackpadGestureType mTrackpadGestureType = TrackpadGestureType.NONE;
     private CachedTaskInfo mRunningTask;
+    @Nullable private AppWindowAnimationState.GestureHandoff mAppAnimationHandoff;
     private GestureEndTarget mEndTarget;
     private RemoteAnimationTarget[] mLastAppearedTaskTargets;
     private Set<Integer> mPreviouslyAppearedTaskIds = new HashSet<>();
@@ -384,6 +392,28 @@ public class GestureState implements RecentsAnimationCallbacks.RecentsAnimationL
      */
     public void updateRunningTask(@NonNull CachedTaskInfo runningTask) {
         mRunningTask = runningTask;
+    }
+
+    /** The remote launch target is authoritative while the task-stack notification is pending. */
+    public void setAppAnimationHandoff(Context context,
+            AppWindowAnimationState.GestureHandoff handoff) {
+        TaskInfo task = handoff.getTaskInfo();
+        if (task == null || task.displayId != mDisplayId) return;
+        mAppAnimationHandoff = handoff;
+        mRunningTask = com.android.wm.shell.Flags.enableShellTopTaskTracking()
+                ? new CachedTaskInfo(GroupedTaskInfo.forFullscreenTasks(task))
+                : new CachedTaskInfo(Collections.singletonList(task), context, mDisplayId,
+                        INACTIVE_DESK_ID);
+    }
+
+    public boolean hasAppAnimationHandoff() {
+        return mAppAnimationHandoff != null;
+    }
+
+    public @Nullable AppWindowAnimationState.GestureHandoff consumeAppAnimationHandoff() {
+        AppWindowAnimationState.GestureHandoff handoff = mAppAnimationHandoff;
+        mAppAnimationHandoff = null;
+        return handoff;
     }
 
     /**

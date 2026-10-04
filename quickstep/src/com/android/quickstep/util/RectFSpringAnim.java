@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2019 The Android Open Source Project
+ * Modified by the ArkUI Project in 2026 to coalesce frames and preserve them on cancellation.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,10 +20,13 @@ package com.android.quickstep.util;
 import static java.lang.annotation.RetentionPolicy.SOURCE;
 
 import android.animation.Animator;
+import android.animation.AnimatorListenerAdapter;
+import android.animation.ValueAnimator;
 import android.content.Context;
 import android.graphics.PointF;
 import android.graphics.Rect;
 import android.graphics.RectF;
+import android.view.Choreographer;
 
 import androidx.annotation.IntDef;
 import androidx.annotation.Nullable;
@@ -34,6 +38,8 @@ import androidx.dynamicanimation.animation.SpringForce;
 import com.android.launcher3.DeviceProfile;
 import com.android.launcher3.R;
 import com.android.launcher3.Utilities;
+import com.android.launcher3.anim.DesktopAnimationSettings;
+import com.android.launcher3.anim.WindowMotion;
 import com.android.launcher3.util.DynamicResource;
 import com.android.quickstep.RemoteAnimationTargets.ReleaseCheck;
 import com.android.systemui.plugins.ResourceProvider;
@@ -59,7 +65,7 @@ public class RectFSpringAnim extends ReleaseCheck {
                 @Override
                 public void setValue(RectFSpringAnim anim, float currentCenterX) {
                     anim.mCurrentCenterX = currentCenterX;
-                    anim.onUpdate();
+                    anim.scheduleUpdate();
                 }
             };
 
@@ -73,7 +79,7 @@ public class RectFSpringAnim extends ReleaseCheck {
                 @Override
                 public void setValue(RectFSpringAnim anim, float y) {
                     anim.mCurrentY = y;
-                    anim.onUpdate();
+                    anim.scheduleUpdate();
                 }
             };
 
@@ -87,7 +93,7 @@ public class RectFSpringAnim extends ReleaseCheck {
                 @Override
                 public void setValue(RectFSpringAnim object, float value) {
                     object.mCurrentScaleProgress = value;
-                    object.onUpdate();
+                    object.scheduleUpdate();
                 }
             };
 
@@ -105,9 +111,93 @@ public class RectFSpringAnim extends ReleaseCheck {
     private SpringAnimation mRectYSpring;
     private SpringAnimation mRectScaleAnim;
     private boolean mAnimsStarted;
+    private boolean mCancelled;
     private boolean mRectXAnimEnded;
     private boolean mRectYAnimEnded;
     private boolean mRectScaleAnimEnded;
+    private boolean mUpdatePending;
+    private final Choreographer mChoreographer = Choreographer.getInstance();
+    private final Runnable mFrameUpdate = () -> {
+        mUpdatePending = false;
+        onUpdate();
+    };
+    @Nullable private DesktopAnimationSettings mMotion;
+    @Nullable private ValueAnimator mHomeAnimator;
+    private WindowMotion mHomeX, mHomeY, mHomeSize, mHomeWidth;
+    private float mHomeElapsed;
+    private float mCurrentWidthProgress;
+    private float mInitialWidthVelocity = Float.NaN;
+    private float mInitialSizeVelocity = Float.NaN;
+    private float mMinimumSizeProgress;
+    private boolean mHasInitialVelocity;
+    @Nullable private Runnable mOnCancelContinuation;
+
+    public void setOnCancelContinuation(Runnable continuation) {
+        mOnCancelContinuation = continuation;
+    }
+
+    /** Continue the same motion clock on a snapshot, without retaining remote lifecycle callbacks. */
+    public @Nullable ValueAnimator createContinuation(OnUpdateListener listener) {
+        if (!isRunning() || mHomeAnimator == null || mHomeElapsed >= mMotion.homeDuration) {
+            return null;
+        }
+        final float elapsed = mHomeElapsed;
+        final float startWidth = mStartRect.width(), startHeight = mStartRect.height();
+        final float endWidth = mTargetRect.width(), endHeight = mTargetRect.height();
+        final RectF rect = new RectF();
+        ValueAnimator tail = ValueAnimator.ofFloat(elapsed, mMotion.homeDuration);
+        tail.setDuration(Math.max(1L, Math.round(mMotion.homeDuration - elapsed)));
+        tail.setInterpolator(com.android.app.animation.Interpolators.LINEAR);
+        tail.addUpdateListener(animation -> {
+            float time = (float) animation.getAnimatedValue();
+            float curve = mMotion.homeInterpolator.getInterpolation(time / mMotion.homeDuration);
+            float x = mHomeX.value(time, curve), y = mHomeY.value(time, curve);
+            float size = mHomeSize.value(time);
+            float width = Utilities.boundToRange(mHomeWidth.value(time), mMinimumSizeProgress, 1f);
+            float boundedSize = Utilities.boundToRange(size, mMinimumSizeProgress, 1f);
+            float halfWidth = Utilities.mapRange(width, startWidth, endWidth) / 2f;
+            float halfHeight = Utilities.mapRange(boundedSize, startHeight, endHeight) / 2f;
+            rect.set(x - halfWidth, y - halfHeight, x + halfWidth, y + halfHeight);
+            listener.onUpdate(rect, Utilities.boundToRange(size, 0f, 1f));
+        });
+        return tail;
+    }
+
+    /** Size velocity from the interrupted frame, in pixels/ms. */
+    public void setInitialSizeVelocity(float widthVelocity, float heightVelocity) {
+        mHasInitialVelocity = true;
+        float distance = mTargetRect.height() - mStartRect.height();
+        mInitialSizeVelocity = Math.abs(distance) < 1f ? 0f : heightVelocity / distance;
+        float widthDistance = mTargetRect.width() - mStartRect.width();
+        mInitialWidthVelocity = Math.abs(widthDistance) < 1f ? 0f : widthVelocity / widthDistance;
+    }
+
+    /** Uneased release clock for background effects; geometry may settle sooner or overshoot. */
+    public float getTimelineProgress() {
+        return Utilities.boundToRange(mMotion == null ? mCurrentScaleProgress
+                : mHomeElapsed / mMotion.homeDuration, 0f, 1f);
+    }
+
+    /** Only app/home callers opt in; split, PiP and taskbar springs retain their own tuning. */
+    public void setMotionSettings(DesktopAnimationSettings motion) {
+        mMotion = motion;
+        if (!mAnimsStarted) mCurrentY = mStartRect.centerY();
+    }
+
+    private void scheduleUpdate() {
+        if (!mUpdatePending && !isEnded() && !mCancelled) {
+            mUpdatePending = true;
+            // X, Y and size springs tick independently in CALLBACK_ANIMATION. Commit their
+            // combined frame once in the phase between animations and traversal. Posting to
+            // traversal itself can run after ViewRoot's draw and delay the surface by a frame.
+            mChoreographer.postCallback(Choreographer.CALLBACK_INSETS_ANIMATION, mFrameUpdate, null);
+        }
+    }
+
+    private void removePendingUpdate() {
+        mChoreographer.removeCallbacks(Choreographer.CALLBACK_INSETS_ANIMATION, mFrameUpdate, null);
+        mUpdatePending = false;
+    }
 
     /**
      * Indicates which part of the start & target rects we are interpolating between.
@@ -152,7 +242,7 @@ public class RectFSpringAnim extends ReleaseCheck {
     }
 
     private float getTrackedYFromRect(RectF rect) {
-        switch (mTracking) {
+        switch (mMotion == null ? mTracking : TRACKING_CENTER) {
             case TRACKING_TOP:
                 return rect.top;
             case TRACKING_BOTTOM:
@@ -167,6 +257,11 @@ public class RectFSpringAnim extends ReleaseCheck {
         if (isEnded()) {
             return;
         }
+        if (mHomeAnimator != null) {
+            mHomeX.retarget(mTargetRect.centerX(), mHomeElapsed);
+            mHomeY.retarget(mTargetRect.centerY(), mHomeElapsed);
+            return;
+        }
 
         if (mRectXSpring != null) {
             mRectXSpring.animateToFinalPosition(mTargetRect.centerX());
@@ -174,7 +269,7 @@ public class RectFSpringAnim extends ReleaseCheck {
         }
 
         if (mRectYSpring != null) {
-            switch (mTracking) {
+            switch (mMotion == null ? mTracking : TRACKING_CENTER) {
                 case TRACKING_TOP:
                     mRectYSpring.animateToFinalPosition(mTargetRect.top);
                     break;
@@ -203,6 +298,23 @@ public class RectFSpringAnim extends ReleaseCheck {
      * @param velocityPxPerMs Velocity of swipe in px/ms.
      */
     public void start(Context context, @Nullable DeviceProfile profile, PointF velocityPxPerMs) {
+        if (mCancelled || isEnded()) {
+            return;
+        }
+        if (mMotion != null) {
+            if (profile != null && mStartRect.width() > mTargetRect.width()
+                    && mStartRect.height() > mTargetRect.height()) {
+                // Catching an opening window may briefly keep growing before it reverses.
+                // Preserve that momentum, bounded by fullscreen rather than the handoff size.
+                mMinimumSizeProgress = Math.min(0f, Math.max(
+                        (profile.getDeviceProperties().getWidthPx() - mStartRect.width())
+                                / (mTargetRect.width() - mStartRect.width()),
+                        (profile.getDeviceProperties().getHeightPx() - mStartRect.height())
+                                / (mTargetRect.height() - mStartRect.height())));
+            }
+            startHomeAnimation(velocityPxPerMs);
+            return;
+        }
         // Only tell caller that we ended if both x and y animations have ended.
         OnAnimationEndListener onXEndListener = ((animation, canceled, centerX, velocityX) -> {
             mRectXAnimEnded = true;
@@ -289,7 +401,66 @@ public class RectFSpringAnim extends ReleaseCheck {
         }
     }
 
+    private void startHomeAnimation(PointF velocity) {
+        final boolean handoff = mHasInitialVelocity || velocity.x != 0f || velocity.y != 0f;
+        mHomeX = new WindowMotion(mCurrentCenterX, mTargetRect.centerX(),
+                handoff ? velocity.x : Float.NaN, mMotion.homeDuration, mMotion.homeInterpolator,
+                mMotion.positionStiffness, mMotion.positionDamping);
+        mHomeY = new WindowMotion(mCurrentY, mTargetRect.centerY(),
+                handoff ? velocity.y : Float.NaN, mMotion.homeDuration, mMotion.homeInterpolator,
+                mMotion.positionStiffness, mMotion.positionDamping);
+        float sizeVelocity = mInitialSizeVelocity;
+        if (!Float.isFinite(sizeVelocity) && handoff) {
+            sizeVelocity = Math.max(0f, -velocity.y)
+                    / Math.max(1f, mStartRect.height() - mTargetRect.height());
+        }
+        mHomeSize = new WindowMotion(0f, 1f, sizeVelocity, mMotion.homeHeightDuration,
+                mMotion.homeSizeInterpolator, mMotion.sizeStiffness, mMotion.sizeDamping);
+        mHomeWidth = new WindowMotion(0f, 1f,
+                Float.isFinite(mInitialWidthVelocity) ? mInitialWidthVelocity : sizeVelocity,
+                mMotion.homeDuration, mMotion.homeSizeInterpolator,
+                mMotion.sizeStiffness, mMotion.sizeDamping);
+        mHomeAnimator = ValueAnimator.ofFloat(0f, 1f);
+        mHomeAnimator.setDuration(mMotion.homeDuration);
+        mHomeAnimator.setInterpolator(com.android.app.animation.Interpolators.LINEAR);
+        mHomeAnimator.addUpdateListener(animator -> {
+            mHomeElapsed = animator.getAnimatedFraction() * mMotion.homeDuration;
+            float progress = mMotion.homeInterpolator.getInterpolation(animator.getAnimatedFraction());
+            mCurrentCenterX = mHomeX.value(mHomeElapsed, progress);
+            mCurrentY = mHomeY.value(mHomeElapsed, progress);
+            mCurrentScaleProgress = mHomeSize.value(mHomeElapsed);
+            mCurrentWidthProgress = mHomeWidth.value(mHomeElapsed);
+            // One frame updates position, size, rotation, icon and blur together.
+            onUpdate();
+        });
+        mHomeAnimator.addListener(new AnimatorListenerAdapter() {
+            @Override
+            public void onAnimationEnd(Animator animation) {
+                if (mCancelled) return;
+                mRectXAnimEnded = mRectYAnimEnded = mRectScaleAnimEnded = true;
+                maybeOnEnd();
+            }
+        });
+        mAnimsStarted = true;
+        setCanRelease(false);
+        for (Animator.AnimatorListener listener : mAnimatorListeners) {
+            listener.onAnimationStart(null);
+        }
+        if (!mCancelled) {
+            // Replace the simulator's preparation transaction in the same frame, including
+            // a release from a small-window hover, before the animator's first vsync pulse.
+            onUpdate();
+            if (!mCancelled) mHomeAnimator.start();
+        }
+    }
+
     public void end() {
+        if (mCancelled || isEnded()) return;
+        removePendingUpdate();
+        if (mHomeAnimator != null) {
+            if (mAnimsStarted && !mCancelled) mHomeAnimator.end();
+            return;
+        }
         if (mAnimsStarted) {
             if (mRectXSpring.canSkipToEnd()) {
                 mRectXSpring.skipToEnd();
@@ -301,12 +472,9 @@ public class RectFSpringAnim extends ReleaseCheck {
                 mRectScaleAnim.skipToEnd();
             }
             mCurrentScaleProgress = mRectScaleAnim.getSpring().getFinalPosition();
+            mCurrentCenterX = mTargetRect.centerX();
+            mCurrentY = getTrackedYFromRect(mTargetRect);
 
-            // Ensures that we end the animation with the final values.
-            mRectXAnimEnded = false;
-            mRectYAnimEnded = false;
-            mRectScaleAnimEnded = false;
-            onUpdate();
         }
 
         mRectXAnimEnded = true;
@@ -315,23 +483,36 @@ public class RectFSpringAnim extends ReleaseCheck {
         maybeOnEnd();
     }
 
-    private boolean isEnded() {
+    public boolean isEnded() {
         return mRectXAnimEnded && mRectYAnimEnded && mRectScaleAnimEnded;
     }
 
+    public boolean isRunning() {
+        return mAnimsStarted && !mCancelled;
+    }
+
     private void onUpdate() {
-        if (isEnded()) {
+        onUpdate(false);
+    }
+
+    private void onUpdate(boolean finalFrame) {
+        if (isEnded() && !finalFrame) {
             // Prevent further updates from being called. This can happen between callbacks for
             // ending the x/y/scale animations.
             return;
         }
 
         if (!mOnUpdateListeners.isEmpty()) {
-            float currentWidth = Utilities.mapRange(mCurrentScaleProgress, mStartRect.width(),
+            float progress = Utilities.boundToRange(mCurrentScaleProgress, 0f, 1f);
+            float sizeProgress = mMotion == null ? progress
+                    : Utilities.boundToRange(mCurrentScaleProgress, mMinimumSizeProgress, 1f);
+            float widthProgress = mMotion == null ? sizeProgress
+                    : Utilities.boundToRange(mCurrentWidthProgress, mMinimumSizeProgress, 1f);
+            float currentWidth = Utilities.mapRange(widthProgress, mStartRect.width(),
                     mTargetRect.width());
-            float currentHeight = Utilities.mapRange(mCurrentScaleProgress, mStartRect.height(),
+            float currentHeight = Utilities.mapRange(sizeProgress, mStartRect.height(),
                     mTargetRect.height());
-            switch (mTracking) {
+            switch (mMotion == null ? mTracking : TRACKING_CENTER) {
                 case TRACKING_TOP:
                     mCurrentRect.set(mCurrentCenterX - currentWidth / 2,
                             mCurrentY,
@@ -352,14 +533,17 @@ public class RectFSpringAnim extends ReleaseCheck {
                     break;
             }
             for (OnUpdateListener onUpdateListener : mOnUpdateListeners) {
-                onUpdateListener.onUpdate(mCurrentRect, mCurrentScaleProgress);
+                onUpdateListener.onUpdate(mCurrentRect, progress);
             }
         }
     }
 
     private void maybeOnEnd() {
         if (mAnimsStarted && isEnded()) {
+            // Emit the final combined frame before releasing the remote surface.
+            removePendingUpdate();
             mAnimsStarted = false;
+            if (mHomeAnimator == null) onUpdate(true);
             setCanRelease(true);
             for (Animator.AnimatorListener animatorListener : mAnimatorListeners) {
                 animatorListener.onAnimationEnd(null);
@@ -368,12 +552,37 @@ public class RectFSpringAnim extends ReleaseCheck {
     }
 
     public void cancel() {
-        if (mAnimsStarted) {
-            for (OnUpdateListener onUpdateListener : mOnUpdateListeners) {
-                onUpdateListener.onCancel();
-            }
+        if (mCancelled || isEnded()) return;
+        if (mOnCancelContinuation != null) {
+            Runnable continuation = mOnCancelContinuation;
+            mOnCancelContinuation = null;
+            continuation.run();
         }
-        end();
+        mCancelled = true;
+        removePendingUpdate();
+        // Stop before callbacks: floating-view cleanup can call end() reentrantly. A new
+        // gesture must not receive a final, icon-sized frame from the cancelled animation.
+        mAnimsStarted = false;
+        mRectXAnimEnded = true;
+        mRectYAnimEnded = true;
+        mRectScaleAnimEnded = true;
+        for (Animator.AnimatorListener listener : mAnimatorListeners) {
+            listener.onAnimationCancel(null);
+        }
+        if (mHomeAnimator != null) {
+            mHomeAnimator.cancel();
+        } else {
+            if (mRectXSpring != null) mRectXSpring.cancel();
+            if (mRectYSpring != null) mRectYSpring.cancel();
+            if (mRectScaleAnim != null) mRectScaleAnim.cancel();
+        }
+        for (OnUpdateListener listener : mOnUpdateListeners) {
+            listener.onCancel();
+        }
+        setCanRelease(true);
+        for (Animator.AnimatorListener listener : mAnimatorListeners) {
+            listener.onAnimationEnd(null);
+        }
     }
 
     /**

@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Modified by the ArkUI Project in 2026 to expose desktop preferences to system Settings. -->
 <!--
 /*
 **
@@ -130,6 +131,12 @@
         <provider
             android:name="com.android.launcher3.graphics.LauncherCustomizationProvider"
             android:authorities="${applicationId}.grid_control"
+            android:exported="true" />
+
+        <provider
+            android:name="com.android.launcher3.settings.DesktopSettingsProvider"
+            android:authorities="${applicationId}.desktop_settings"
+            android:permission="android.permission.WRITE_SECURE_SETTINGS"
             android:exported="true" />
 
         <!--

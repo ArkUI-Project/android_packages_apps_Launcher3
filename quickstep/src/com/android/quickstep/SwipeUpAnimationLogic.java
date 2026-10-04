@@ -1,4 +1,5 @@
 /*
+ * Modified by the ArkUI Project in 2026 for landscape app return animations.
  * Copyright (C) 2020 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,9 +24,11 @@ import android.animation.Animator;
 import android.content.Context;
 import android.graphics.Matrix;
 import android.graphics.Matrix.ScaleToFit;
+import android.graphics.PointF;
 import android.graphics.Rect;
 import android.graphics.RectF;
 import android.view.RemoteAnimationTarget;
+import android.view.View;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -43,6 +46,10 @@ import com.android.launcher3.views.ClipIconView;
 import com.android.quickstep.RemoteTargetGluer.RemoteTargetHandle;
 import com.android.quickstep.orientation.RecentsPagedOrientationHandler;
 import com.android.quickstep.util.AnimatorControllerWithResistance;
+import com.android.quickstep.util.LandscapeAppAnimation;
+import com.android.quickstep.util.AppWindowAnimationState;
+import com.android.quickstep.util.WindowAnimationSnapshot;
+import com.android.launcher3.anim.DesktopAnimationSettings;
 import com.android.quickstep.util.RectFSpringAnim;
 import com.android.quickstep.util.RectFSpringAnim.DefaultSpringConfig;
 import com.android.quickstep.util.RectFSpringAnim.TaskbarHotseatSpringConfig;
@@ -174,6 +181,25 @@ public abstract class SwipeUpAnimationLogic implements
 
     protected abstract class HomeAnimationFactory {
         protected float mSwipeVelocity;
+        protected float mLandscapeRotation;
+        protected final DesktopAnimationSettings mMotion = DesktopAnimationSettings.read(mContext);
+        @Nullable private RectF mStartWindow;
+        private float mStartWindowRadius;
+        @Nullable private PointF mStartSizeVelocity;
+
+        public void setStartWindow(RectF rect, float visibleRadius, @Nullable PointF sizeVelocity) {
+            mStartWindow = new RectF(rect);
+            mStartWindowRadius = visibleRadius;
+            mStartSizeVelocity = sizeVelocity;
+        }
+
+        public void beginAppTransition(Object owner) { }
+
+        public void setAppTransitionProgress(Object owner, float progress) { }
+
+        public void endAppTransition(Object owner) { }
+
+        public @Nullable View getAnimationHost() { return null; }
 
         /**
          * Returns true if we know the home animation involves an item in the hotseat.
@@ -183,22 +209,12 @@ public abstract class SwipeUpAnimationLogic implements
         }
 
         public @NonNull RectF getWindowTargetRect() {
-            PagedOrientationHandler orientationHandler = getOrientationHandler();
-            DeviceProfile dp = mDp;
-            final int halfIconSize = dp.getWorkspaceIconProfile().getIconSizePx() / 2;
-            float primaryDimension = orientationHandler.getPrimaryValue(
-                    dp.getDeviceProperties().getAvailableWidthPx(),
-                    dp.getDeviceProperties().getAvailableHeightPx()
-            );
-            float secondaryDimension = orientationHandler.getSecondaryValue(
-                    dp.getDeviceProperties().getAvailableWidthPx(),
-                    dp.getDeviceProperties().getAvailableHeightPx()
-            );
-            final float targetX =  primaryDimension / 2f;
-            final float targetY = secondaryDimension - dp.hotseatBarSizePx;
-            // Fallback to animate to center of screen.
-            return new RectF(targetX - halfIconSize, targetY - halfIconSize,
-                    targetX + halfIconSize, targetY + halfIconSize);
+            return LandscapeAppAnimation.getDefaultHomeTarget(mDp);
+        }
+
+        /** Widgets, PiP and split-screen supply their own geometry. */
+        public boolean supportsLandscapeAnimation() {
+            return false;
         }
 
         /** Returns the corner radius of the window at the end of the animation. */
@@ -227,6 +243,9 @@ public abstract class SwipeUpAnimationLogic implements
          * @return The current alpha to set on the animating app window.
          */
         protected float getWindowAlpha(float progress) {
+            if (supportsLandscapeAnimation() && getTargetTaskView() == null) {
+                return mMotion.windowAlpha(progress);
+            }
             // Alpha interpolates between [1, 0] between progress values [start, end]
             final float start = 0f;
             final float end = 0.85f;
@@ -347,6 +366,23 @@ public abstract class SwipeUpAnimationLogic implements
         Matrix windowToHomePositionMap = new Matrix();
 
         TaskView targetTaskView = homeAnimationFactory.getTargetTaskView();
+        RemoteAnimationTargets targets = transformParams.getTargetSet();
+        if (!mIsSwipeForSplit && targetTaskView == null
+                && homeAnimationFactory.supportsLandscapeAnimation()
+                && targets != null && targets.apps.length == 1 && !cropRectF.isEmpty()
+                && LandscapeAppAnimation.getClosingRotation(mContext, mDp,
+                        targets.getFirstAppTarget(), taskViewSimulator.getOrientationState()
+                                .getRecentsActivityRotation()) != 0f) {
+            // Remove only the app-plane tilt from the spring's geometry. Using the rotated
+            // bounding box here enlarges the first return frame when catching an opening app.
+            Matrix untilted = new Matrix(taskViewSimulator.getCurrentMatrix());
+            RectF mapped = new RectF(cropRectF);
+            untilted.mapRect(mapped);
+            untilted.postRotate(taskViewSimulator.getBaseMatrixRotation()
+                            - LandscapeAppAnimation.getMatrixRotation(untilted),
+                    mapped.centerX(), mapped.centerY());
+            untilted.mapRect(startRect, cropRectF);
+        }
         if (targetTaskView == null) {
             // If the start rect ends up overshooting too much to the left/right offscreen, bring it
             // back to fullscreen. This can happen when the recentsScroll value isn't aligned with
@@ -358,6 +394,9 @@ public abstract class SwipeUpAnimationLogic implements
 
         }
         homeToWindowPositionMap.invert(windowToHomePositionMap);
+        if (homeAnimationFactory.mStartWindow != null && targetTaskView == null) {
+            startRect.set(homeAnimationFactory.mStartWindow);
+        }
         windowToHomePositionMap.mapRect(startRect);
         RectF invariantStartRect = new RectF(startRect);
 
@@ -375,6 +414,19 @@ public abstract class SwipeUpAnimationLogic implements
         RectFSpringAnim anim = new RectFSpringAnim(useTaskbarHotseatParams
                 ? new TaskbarHotseatSpringConfig(mContext, startRect, targetRect)
                 : new DefaultSpringConfig(mContext, mDp, startRect, targetRect));
+        if (!useTaskbarHotseatParams && !mIsSwipeForSplit && targetTaskView == null
+                && homeAnimationFactory.supportsLandscapeAnimation()) {
+            anim.setMotionSettings(homeAnimationFactory.mMotion);
+            if (homeAnimationFactory.mStartSizeVelocity != null) {
+                float[] values = new float[9];
+                windowToHomePositionMap.getValues(values);
+                boolean swapped = Math.abs(values[Matrix.MSKEW_X])
+                        > Math.abs(values[Matrix.MSCALE_X]);
+                PointF velocity = homeAnimationFactory.mStartSizeVelocity;
+                anim.setInitialSizeVelocity(swapped ? velocity.y : velocity.x,
+                        swapped ? velocity.x : velocity.y);
+            }
+        }
         homeAnimationFactory.setAnimation(anim);
 
         SpringAnimationRunner runner = new SpringAnimationRunner(
@@ -383,7 +435,7 @@ public abstract class SwipeUpAnimationLogic implements
                 homeToWindowPositionMap,
                 transformParams,
                 taskViewSimulator,
-                invariantStartRect);
+                invariantStartRect, anim);
         anim.addAnimatorListener(runner);
         anim.addOnUpdateListener(runner);
         return anim;
@@ -407,8 +459,19 @@ public abstract class SwipeUpAnimationLogic implements
 
         final float mStartRadius;
         final float mEndRadius;
+        final float mLandscapeRotation;
+        final float mStartMatrixRotation;
+        final float mBaseMatrixRotation;
+        final float mFullLandscapeRotation;
+        final float mStartAppRotation;
+        final DesktopAnimationSettings mMotion;
+        @Nullable final AppWindowAnimationState.Session mMotionState;
+        @Nullable final WindowAnimationSnapshot mSnapshot;
+        private final Matrix mWindowToHome = new Matrix();
+        private final Matrix mSnapshotMatrix = new Matrix();
 
         final RectF mRunningTaskViewStartRectF;
+        private final RectFSpringAnim mWindowAnimation;
         @Nullable
         final TaskView mTargetTaskView;
         final float mRunningTaskViewScrollOffset;
@@ -431,8 +494,10 @@ public abstract class SwipeUpAnimationLogic implements
                 Matrix homeToWindowPositionMap,
                 TransformParams transformParams,
                 TaskViewSimulator taskViewSimulator,
-                RectF invariantStartRect) {
+                RectF invariantStartRect, RectFSpringAnim windowAnimation) {
             mAnimationFactory = factory;
+            mWindowAnimation = windowAnimation;
+            mMotion = factory.mMotion;
             mHomeAnim = factory.createActivityAnimationToHome();
             mCropRectF = cropRectF;
             mHomeToWindowPositionMap = homeToWindowPositionMap;
@@ -442,11 +507,34 @@ public abstract class SwipeUpAnimationLogic implements
 
             // End on a "round-enough" radius so that the shape reveal doesn't have to do too much
             // rounding at the end of the animation.
-            mStartRadius = taskViewSimulator.getCurrentCornerRadius();
+            mStartRadius = factory.mStartWindow == null
+                    ? taskViewSimulator.getCurrentCornerRadius()
+                    : factory.mStartWindowRadius * cropRectF.width()
+                            / Math.max(1f, invariantStartRect.width());
             mEndRadius = factory.getEndRadius(cropRectF);
 
             mRunningTaskViewStartRectF = invariantStartRect;
             mTargetTaskView = factory.getTargetTaskView();
+            final RemoteAnimationTargets targets = transformParams.getTargetSet();
+            mMotionState = !mIsSwipeForSplit && mTargetTaskView == null
+                    && factory.supportsLandscapeAnimation() && targets != null
+                    && targets.apps.length == 1
+                    ? AppWindowAnimationState.begin(targets.getFirstAppTargetTaskId(), mDp) : null;
+            mFullLandscapeRotation = !mIsSwipeForSplit && mTargetTaskView == null
+                    && factory.supportsLandscapeAnimation()
+                    && targets != null && targets.apps.length == 1
+                    && !cropRectF.isEmpty()
+                    ? LandscapeAppAnimation.getClosingRotation(mContext, mDp,
+                            targets.getFirstAppTarget(), taskViewSimulator.getOrientationState()
+                                    .getRecentsActivityRotation()) : 0f;
+            mStartMatrixRotation = LandscapeAppAnimation.getMatrixRotation(
+                    taskViewSimulator.getCurrentMatrix());
+            mBaseMatrixRotation = taskViewSimulator.getBaseMatrixRotation();
+            mStartAppRotation = LandscapeAppAnimation.normalizeRotation(
+                    mStartMatrixRotation - mBaseMatrixRotation);
+            mLandscapeRotation = mFullLandscapeRotation == 0f ? 0f
+                    : mFullLandscapeRotation - mStartAppRotation;
+            factory.mLandscapeRotation = mLandscapeRotation;
             mTaskViewWidth = mTargetTaskView == null ? 0 : mTargetTaskView.getWidth();
             mTaskViewHeight = mTargetTaskView == null ? 0 : mTargetTaskView.getHeight();
             mIsPortrait = factory.isPortrait();
@@ -455,17 +543,62 @@ public abstract class SwipeUpAnimationLogic implements
             mRunningTaskViewScrollOffset = factory.isRtl()
                     ? (Math.min(0, -invariantStartRect.right))
                     : (Math.max(0, mDp.getDeviceProperties().getWidthPx() - invariantStartRect.left));
+            View host = factory.getAnimationHost();
+            if (mMotionState != null && host != null && targets != null
+                    && !targets.getFirstAppTarget().isTranslucent) {
+                homeToWindowPositionMap.invert(mWindowToHome);
+                mSnapshot = new WindowAnimationSnapshot(host, targets.getFirstAppTarget().leash,
+                        mCropRect, mMotionState);
+                windowAnimation.setOnCancelContinuation(() -> mSnapshot.continueAnimation(
+                        windowAnimation, this::updateSnapshot));
+            } else {
+                mSnapshot = null;
+            }
+        }
+
+        private float updateHomeWindowGeometry(RectF currentRect, float progress) {
+            float radius = Utilities.mapRange(mMotionState != null
+                    ? mMotion.cornerProgress(progress) : progress, mStartRadius, mEndRadius);
+            mHomeToWindowPositionMap.mapRect(mWindowCurrentRect, currentRect);
+            mMatrix.setRectToRect(mCropRectF, mWindowCurrentRect, ScaleToFit.FILL);
+            if (mMotionState != null && !mWindowCurrentRect.isEmpty()) {
+                LandscapeAppAnimation.applyClosingTransform(mMatrix, mCropRectF,
+                        mWindowCurrentRect, mStartMatrixRotation, mLandscapeRotation,
+                        progress, mCropRect, mMotion, mBaseMatrixRotation);
+                radius = Math.min(radius, Math.min(mCropRect.width(), mCropRect.height()) / 2f);
+            }
+            return radius;
+        }
+
+        private float getOpenness(float progress) {
+            if (mFullLandscapeRotation == 0f) return 1f - progress;
+            float rotationFraction = LandscapeAppAnimation.boundProgress(
+                    (mStartAppRotation + mLandscapeRotation * mMotion.rotationProgress(progress))
+                            / mFullLandscapeRotation);
+            return 1f - (float) Math.pow(rotationFraction, 1f / mMotion.rotationResponse);
+        }
+
+        private void updateSnapshot(RectF currentRect, float progress) {
+            float radius = updateHomeWindowGeometry(currentRect, progress);
+            mSnapshotMatrix.setConcat(mWindowToHome, mMatrix);
+            mSnapshot.update(mSnapshotMatrix, mCropRect, radius,
+                    mAnimationFactory.getWindowAlpha(progress), currentRect,
+                    getOpenness(progress), mSnapshotMatrix.mapRadius(radius));
         }
 
         @Override
         public void onUpdate(RectF currentRect, float progress) {
-            float cornerRadius = Utilities.mapRange(progress, mStartRadius, mEndRadius);
+            if (mMotionState != null && !mMotionState.isActive()) return;
+            float cornerRadius = Utilities.mapRange(mMotionState != null
+                    ? mMotion.cornerProgress(progress) : progress,
+                    mStartRadius, mEndRadius);
             float alpha = mAnimationFactory.getWindowAlpha(progress);
 
             mHomeAnim.setPlayFraction(progress);
             if (mTargetTaskView == null) {
-                mHomeToWindowPositionMap.mapRect(mWindowCurrentRect, currentRect);
-                mMatrix.setRectToRect(mCropRectF, mWindowCurrentRect, ScaleToFit.FILL);
+                cornerRadius = updateHomeWindowGeometry(currentRect, progress);
+                mAnimationFactory.setAppTransitionProgress(this,
+                        mWindowAnimation.getTimelineProgress());
                 mLocalTransformParams
                         .setTargetAlpha(alpha)
                         .setCornerRadius(cornerRadius);
@@ -478,6 +611,10 @@ public abstract class SwipeUpAnimationLogic implements
 
             mLocalTransformParams.applySurfaceParams(
                     mLocalTransformParams.createSurfaceParams(this));
+            if (mMotionState != null) {
+                mMotionState.record(currentRect, getOpenness(progress),
+                        mMatrix.mapRadius(cornerRadius));
+            }
 
             mAnimationFactory.update(
                     currentRect,
@@ -538,12 +675,16 @@ public abstract class SwipeUpAnimationLogic implements
 
         @Override
         public void onCancel() {
+            if (mMotionState != null) mMotionState.cancel();
             cleanUp();
             mAnimationFactory.onCancel();
         }
 
         @Override
         public void onAnimationStart(Animator animation) {
+            if (mTargetTaskView == null) {
+                mAnimationFactory.beginAppTransition(this);
+            }
             setUp();
             mHomeAnim.dispatchOnStart();
             if (mTargetTaskView == null) {
@@ -582,6 +723,7 @@ public abstract class SwipeUpAnimationLogic implements
         }
 
         private void cleanUp() {
+            mAnimationFactory.endAppTransition(this);
             if (mTargetTaskView == null) {
                 return;
             }
@@ -601,7 +743,18 @@ public abstract class SwipeUpAnimationLogic implements
         }
 
         @Override
+        public void onAnimationEnd(Animator animation) {
+            super.onAnimationEnd(animation);
+            if (mSnapshot != null) mSnapshot.onSourceFinished();
+        }
+
+        @Override
         public void onAnimationSuccess(Animator animator) {
+            if (mMotionState != null && !mMotionState.isActive()) {
+                cleanUp();
+                return;
+            }
+            if (mMotionState != null) mMotionState.finish();
             cleanUp();
             mHomeAnim.getAnimationPlayer().end();
         }

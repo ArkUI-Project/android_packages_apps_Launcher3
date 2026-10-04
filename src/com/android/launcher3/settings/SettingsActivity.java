@@ -1,4 +1,5 @@
 /*
+ * Modified by the ArkUI Project in 2026 to integrate home settings with system Settings.
  * Copyright (C) 2015 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,6 +29,7 @@ import static com.android.launcher3.InvariantDeviceProfile.TYPE_TABLET;
 import static com.android.launcher3.states.RotationHelper.ALLOW_ROTATION_PREFERENCE_KEY;
 
 import android.app.Activity;
+import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.content.pm.LauncherApps;
@@ -69,7 +71,7 @@ import com.android.settingslib.widget.SettingsBasePreferenceFragment;
 import com.android.settingslib.widget.SettingsThemeHelper;
 
 /**
- * Settings activity for Launcher. Currently implements the following setting: Allow rotation
+ * Entry point for home settings and authenticated protected-app management.
  */
 public class SettingsActivity extends FragmentActivity
         implements OnPreferenceStartFragmentCallback, OnPreferenceStartScreenCallback {
@@ -101,6 +103,33 @@ public class SettingsActivity extends FragmentActivity
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
+        if ("com.android.launcher3.action.TRUST_APPS".equals(getIntent().getAction())) {
+            // Keep authentication and access to the protected-app database in Launcher.
+            LineageUtils.showLockScreen(this, getString(R.string.trust_apps_manager_name), () -> {
+                startActivity(new Intent(this, TrustAppsActivity.class));
+                finish();
+            }, this::finish);
+            return;
+        }
+
+        // All existing entry points (including the home long-press menu) share the system page.
+        // Retain the original fragment as a fallback for standalone Launcher builds.
+        final Intent desktopSettings = new Intent().setClassName("com.android.settings",
+                "com.android.settings.Settings$ArkuiDesktopSettingsActivity");
+        final String highlightKey = getIntent().getStringExtra(EXTRA_FRAGMENT_HIGHLIGHT_KEY);
+        if (!TextUtils.isEmpty(highlightKey)) {
+            final Bundle arguments = new Bundle();
+            arguments.putString(EXTRA_FRAGMENT_HIGHLIGHT_KEY, highlightKey);
+            desktopSettings.putExtra(":settings:show_fragment_args", arguments);
+        }
+        try {
+            startActivity(desktopSettings);
+            finish();
+            return;
+        } catch (ActivityNotFoundException e) {
+            // The system Settings page is only present in ArkUI.
+        }
         setContentView(R.layout.settings_activity);
 
         setActionBar(findViewById(R.id.action_bar));

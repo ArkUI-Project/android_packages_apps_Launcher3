@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2018 The Android Open Source Project
+ * Modified by the ArkUI Project in 2026 to stop interrupted app animations.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -34,10 +35,13 @@ import androidx.annotation.BinderThread;
 import androidx.annotation.Nullable;
 import androidx.annotation.UiThread;
 
+import com.android.launcher3.anim.AnimatorPlaybackController;
 import com.android.systemui.animation.RemoteAnimationDelegate;
 import com.android.systemui.animation.RemoteAnimationRunnerCompat;
 
 import java.lang.ref.WeakReference;
+import java.util.ArrayList;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * This class is needed to wrap any animation runner that is a part of the
@@ -66,6 +70,7 @@ public class LauncherAnimationRunner extends RemoteAnimationRunnerCompat {
     private final WeakReference<RemoteAnimationFactory> mFactory;
 
     private AnimationResult mAnimationResult;
+    private final AtomicInteger mAnimationGeneration = new AtomicInteger();
 
     /**
      * @param startAtFrontOfQueue If true, the animation start will be posted at the front of the
@@ -86,9 +91,18 @@ public class LauncherAnimationRunner extends RemoteAnimationRunnerCompat {
             RemoteAnimationTarget[] wallpaperTargets,
             RemoteAnimationTarget[] nonAppTargets,
             Runnable runnable) {
+        final int generation = mAnimationGeneration.incrementAndGet();
         Runnable r = () -> {
+            if (generation != mAnimationGeneration.get()) {
+                UI_HELPER_EXECUTOR.execute(runnable);
+                return;
+            }
             finishExistingAnimation();
-            mAnimationResult = new AnimationResult(() -> mAnimationResult = null, runnable);
+            mAnimationResult = new AnimationResult(() -> {
+                if (mAnimationResult != null && mAnimationResult.mGeneration == generation) {
+                    mAnimationResult = null;
+                }
+            }, runnable, generation);
             getFactory().onAnimationStart(transit, appTargets, wallpaperTargets, nonAppTargets,
                     mAnimationResult);
         };
@@ -107,8 +121,9 @@ public class LauncherAnimationRunner extends RemoteAnimationRunnerCompat {
     @UiThread
     private void finishExistingAnimation() {
         if (mAnimationResult != null) {
-            mAnimationResult.finish();
+            AnimationResult previous = mAnimationResult;
             mAnimationResult = null;
+            previous.cancel();
         }
     }
 
@@ -118,7 +133,11 @@ public class LauncherAnimationRunner extends RemoteAnimationRunnerCompat {
     @BinderThread
     @Override
     public void onAnimationCancelled() {
+        final int generation = mAnimationGeneration.get();
         postAsyncCallback(mHandler, () -> {
+            // Starts can be posted at the front of the queue. A queued cancellation belongs
+            // to the request it arrived for, not a newer animation which has since started.
+            if (generation != mAnimationGeneration.get()) return;
             finishExistingAnimation();
             getFactory().onAnimationCancelled();
         });
@@ -132,28 +151,80 @@ public class LauncherAnimationRunner extends RemoteAnimationRunnerCompat {
 
         private final Runnable mSyncFinishRunnable;
         private final Runnable mASyncFinishRunnable;
+        private final int mGeneration;
+        private final ArrayList<Runnable> mPendingAnimations = new ArrayList<>();
 
         private AnimatorSet mAnimator;
         private Runnable mOnCompleteCallback;
         private boolean mFinished = false;
         private boolean mInitialized = false;
+        private boolean mCancelled;
+        private boolean mFinishRequested;
+        private boolean mAnimatorFinished;
 
-        private AnimationResult(Runnable syncFinishRunnable, Runnable asyncFinishRunnable) {
+        private AnimationResult(Runnable syncFinishRunnable, Runnable asyncFinishRunnable,
+                int generation) {
             mSyncFinishRunnable = syncFinishRunnable;
             mASyncFinishRunnable = asyncFinishRunnable;
+            mGeneration = generation;
+        }
+
+        /** Wait for an independently driven window animation, and cancel it on interruption. */
+        @UiThread
+        public Runnable deferFinish(Runnable cancelAnimation) {
+            if (mFinished || mCancelled) {
+                cancelAnimation.run();
+                return () -> { };
+            }
+            mPendingAnimations.add(cancelAnimation);
+            return () -> {
+                if (mPendingAnimations.remove(cancelAnimation) && mFinishRequested) finish();
+            };
         }
 
         @UiThread
         private void finish() {
+            mFinishRequested = true;
+            if (!mCancelled && !mPendingAnimations.isEmpty()) return;
             if (!mFinished) {
+                mFinished = true;
                 mSyncFinishRunnable.run();
+                final Runnable onCompleteCallback = mOnCompleteCallback;
                 UI_HELPER_EXECUTOR.execute(() -> {
                     mASyncFinishRunnable.run();
-                    if (mOnCompleteCallback != null) {
-                        MAIN_EXECUTOR.execute(mOnCompleteCallback);
+                    if (onCompleteCallback != null) {
+                        MAIN_EXECUTOR.execute(onCompleteCallback);
                     }
                 });
-                mFinished = true;
+            }
+        }
+
+        @UiThread
+        private void cancel() {
+            if (mFinished || mCancelled) return;
+            mCancelled = true;
+            // A remote finish callback alone leaves old animators writing to shared views.
+            if (mAnimator != null && !mAnimatorFinished) {
+                cancelAnimator(mAnimator);
+            }
+            // The content AnimatorSet may have ended while the window is still settling.
+            for (Runnable cancelAnimation : new ArrayList<>(mPendingAnimations)) {
+                cancelAnimation.run();
+            }
+            mPendingAnimations.clear();
+            finish();
+        }
+
+        private static void cancelAnimator(AnimatorSet animator) {
+            if (animator.isStarted()) {
+                animator.cancel();
+            } else {
+                // Prepared animations own overlays and targets even before start(). Dispatch
+                // cleanup without starting them or submitting either endpoint to the surface.
+                AnimatorPlaybackController.callListenerCommandRecursively(
+                        animator, Animator.AnimatorListener::onAnimationCancel);
+                AnimatorPlaybackController.callListenerCommandRecursively(
+                        animator, Animator.AnimatorListener::onAnimationEnd);
             }
         }
 
@@ -176,20 +247,20 @@ public class LauncherAnimationRunner extends RemoteAnimationRunnerCompat {
             mInitialized = true;
             mAnimator = animation;
             mOnCompleteCallback = onCompleteCallback;
-            if (mAnimator == null) {
-                finish();
-            } else if (mFinished) {
-                // Animation callback was already finished, skip the animation.
-                mAnimator.start();
-                mAnimator.end();
+            if (mFinished) {
+                // A late factory result must never start and immediately jump to its endpoint.
+                if (mAnimator != null) cancelAnimator(mAnimator);
                 if (mOnCompleteCallback != null) {
                     mOnCompleteCallback.run();
                 }
+            } else if (mAnimator == null) {
+                finish();
             } else {
                 // Start the animation
                 mAnimator.addListener(new AnimatorListenerAdapter() {
                     @Override
                     public void onAnimationEnd(Animator animation) {
+                        mAnimatorFinished = true;
                         finish();
                     }
                 });
@@ -210,7 +281,7 @@ public class LauncherAnimationRunner extends RemoteAnimationRunnerCompat {
          */
         @Override
         public void onAnimationFinished() {
-            mASyncFinishRunnable.run();
+            MAIN_EXECUTOR.execute(this::finish);
         }
     }
 

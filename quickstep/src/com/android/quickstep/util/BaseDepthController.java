@@ -1,4 +1,5 @@
 /*
+ * Modified by the ArkUI Project in 2026 to coordinate app transitions and overview blur.
  * Copyright (C) 2022 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,6 +20,9 @@ import static android.os.Trace.TRACE_TAG_APP;
 
 import static com.android.launcher3.Flags.enableOverviewBackgroundWallpaperBlur;
 
+import android.animation.Animator;
+import android.animation.AnimatorListenerAdapter;
+import android.animation.ValueAnimator;
 import android.app.WallpaperManager;
 import android.graphics.RenderEffect;
 import android.graphics.Shader;
@@ -28,6 +32,7 @@ import android.os.IBinder;
 import android.os.Trace;
 import android.util.FloatProperty;
 import android.util.Log;
+import android.util.SparseArray;
 import android.view.CrossWindowBlurListeners;
 import android.view.SurfaceControl;
 import android.view.View;
@@ -42,11 +47,14 @@ import com.android.launcher3.Launcher;
 import com.android.launcher3.LauncherState;
 import com.android.launcher3.R;
 import com.android.launcher3.Utilities;
+import com.android.launcher3.anim.DesktopAnimationSettings;
 import com.android.launcher3.statemanager.StateManager;
 import com.android.launcher3.uioverrides.QuickstepLauncher;
 import com.android.launcher3.util.MultiPropertyFactory;
 import com.android.launcher3.util.MultiPropertyFactory.MultiProperty;
 import com.android.systemui.shared.system.BlurUtils;
+
+import java.util.List;
 
 /**
  * Utility class for applying depth effect
@@ -75,6 +83,7 @@ public class BaseDepthController {
 
     // b/291401432
     private static final String TAG = "BaseDepthController";
+    private static final boolean DEBUG = false;
 
     protected final QuickstepLauncher mLauncher;
     /** Property to set the depth for state transition. */
@@ -122,6 +131,21 @@ public class BaseDepthController {
     protected boolean mWaitingOnSurfaceValidity;
 
     private SurfaceControl mBlurSurface = null;
+    private Object mAppTransitionOwner;
+    private DesktopAnimationSettings mMotion;
+    private float mAppTransitionBlur;
+    private float mAppTransitionBlurStart;
+    private float mAppTransitionBlurEnd;
+    private boolean mAppTransitionOpening;
+    private long mAppTransitionDuration;
+    private float mStackedOverviewBlur;
+    private ValueAnimator mAppBlurRecovery;
+    private int mWorkspaceBlurRadius;
+    private final SparseArray<RenderEffect> mWorkspaceBlurEffects = new SparseArray<>();
+    private IBinder mWallpaperZoomToken;
+    private float mWallpaperZoom = Float.NaN;
+    private SurfaceControl mLastBlurSurface;
+    private boolean mLastSurfaceOpaque;
     /**
      * Info for early wakeup requests to SurfaceFlinger.
      */
@@ -129,6 +153,7 @@ public class BaseDepthController {
 
     public BaseDepthController(QuickstepLauncher activity) {
         mLauncher = activity;
+        mMotion = DesktopAnimationSettings.read(activity);
         if (Flags.allAppsBlur() || enableOverviewBackgroundWallpaperBlur()) {
             mCrossWindowBlursEnabled =
                     CrossWindowBlurListeners.getInstance().isCrossWindowBlurEnabled();
@@ -185,6 +210,98 @@ public class BaseDepthController {
         applyDepthAndBlur();
     }
 
+    /** A separate blur channel lets interrupted app transitions restore the current UI state. */
+    public void beginAppTransition(Object owner, boolean opening) {
+        beginAppTransition(owner, opening, 0L);
+    }
+
+    public void beginAppTransition(Object owner, boolean opening, long duration) {
+        mMotion = DesktopAnimationSettings.read(mLauncher);
+        mAppTransitionDuration = duration > 0 ? duration
+                : opening ? mMotion.openDuration : mMotion.homeDuration;
+        final boolean continuing = mAppTransitionOwner != null || mAppBlurRecovery != null;
+        if (mAppBlurRecovery != null) {
+            mAppBlurRecovery.cancel();
+        }
+        mAppTransitionOwner = owner;
+        mAppTransitionOpening = opening;
+        mAppTransitionBlurStart = continuing ? mAppTransitionBlur
+                : opening ? mStackedOverviewBlur : 1f;
+        mAppTransitionBlurEnd = opening ? 1f : 0f;
+        mAppTransitionBlur = mAppTransitionBlurStart;
+        refreshAppTransitionBlur();
+    }
+
+    public void setAppTransitionProgress(Object owner, float progress) {
+        if (mAppTransitionOwner != owner) {
+            return;
+        }
+        final float blur = Utilities.mapRange(mMotion.blurProgress(progress,
+                        mAppTransitionOpening, mAppTransitionDuration),
+                mAppTransitionBlurStart, mAppTransitionBlurEnd);
+        if (mAppTransitionBlur == blur) return;
+        mAppTransitionBlur = blur;
+        refreshAppTransitionBlur();
+    }
+
+    /** Keep exactly the displayed blur while a gesture takes over a still-opening window. */
+    public void holdAppTransition(Object owner) {
+        if (mAppBlurRecovery != null) mAppBlurRecovery.cancel();
+        mAppTransitionOwner = owner;
+    }
+
+    public void endAppTransition(Object owner) {
+        if (mAppTransitionOwner != owner) {
+            return;
+        }
+        mAppTransitionOwner = null;
+        // On interruption retain this frame's blur for the next owner. If nothing takes over,
+        // restore the current launcher state without snapping the background into focus.
+        if (mAppTransitionBlur == 0f) {
+            refreshAppTransitionBlur();
+            return;
+        }
+        final ValueAnimator recovery = ValueAnimator.ofFloat(mAppTransitionBlur, 0f);
+        mAppBlurRecovery = recovery;
+        recovery.setDuration(mMotion.blurRecovery);
+        recovery.setInterpolator(mMotion.interpolator);
+        recovery.addUpdateListener(animator -> {
+            mAppTransitionBlur = (float) animator.getAnimatedValue();
+            refreshAppTransitionBlur();
+        });
+        recovery.addListener(new AnimatorListenerAdapter() {
+            @Override
+            public void onAnimationEnd(Animator animation) {
+                if (mAppBlurRecovery == recovery) {
+                    mAppBlurRecovery = null;
+                }
+            }
+        });
+        recovery.start();
+    }
+
+    public void setStackedOverviewBlur(float amount) {
+        amount = Utilities.boundToRange(amount, 0f, 1f);
+        if (amount > 0f && mStackedOverviewBlur == 0f) {
+            mMotion = DesktopAnimationSettings.read(mLauncher);
+        }
+        if (mStackedOverviewBlur != amount) {
+            mStackedOverviewBlur = amount;
+            refreshAppTransitionBlur();
+        }
+    }
+
+    private int getAppTransitionBlurRadius() {
+        return mCrossWindowBlursEnabled && BlurUtils.supportsBlursOnWindows()
+                ? Math.round(Math.max(mAppTransitionBlur, mStackedOverviewBlur)
+                        * Math.min(mMaxBlurRadius,
+                        Utilities.dpToPx(mMotion.blurRadius))) : 0;
+    }
+
+    private void refreshAppTransitionBlur() {
+        applyDepthAndBlur(null, false, true);
+    }
+
     protected void onInvalidSurface() { }
 
     protected void applyDepthAndBlur() {
@@ -202,21 +319,27 @@ public class BaseDepthController {
             boolean applyImmediately, boolean skipSimilarBlur) {
         float depth = mDepth;
         IBinder windowToken = mLauncher.getRootView().getWindowToken();
-        if (windowToken != null) {
+        if (windowToken != null
+                && (windowToken != mWallpaperZoomToken || depth != mWallpaperZoom)) {
             mWallpaperManager.setWallpaperZoomOut(windowToken, depth);
+            mWallpaperZoomToken = windowToken;
+            mWallpaperZoom = depth;
         }
 
         if (!BlurUtils.supportsBlursOnWindows()) {
+            blurWorkspaceDepthTargets();
             return;
         }
         if (mBaseSurface == null) {
-            Log.d(TAG, "mSurface is null and mCurrentBlur is: " + mCurrentBlur);
+            if (DEBUG) Log.d(TAG, "mSurface is null and mCurrentBlur is: " + mCurrentBlur);
+            blurWorkspaceDepthTargets();
             return;
         }
         if (!mBaseSurface.isValid()) {
-            Log.d(TAG, "mSurface is not valid");
+            if (DEBUG) Log.d(TAG, "mSurface is not valid");
             mWaitingOnSurfaceValidity = true;
             onInvalidSurface();
+            blurWorkspaceDepthTargets();
             return;
         }
         mWaitingOnSurfaceValidity = false;
@@ -231,16 +354,25 @@ public class BaseDepthController {
         int previousBlur = mCurrentBlur;
         int newBlur = mCrossWindowBlursEnabled && !hasOpaqueBg && !mPauseBlurs ? (int) (blurAmount
                 * mMaxBlurRadius) : 0;
-        int delta = Math.abs(newBlur - previousBlur);
-        if (skipSimilarBlur && delta < Utilities.dpToPx(1) && newBlur != 0 && previousBlur != 0
-                && blurAmount != 1f) {
-            Log.d(TAG, "Skipping small blur delta. newBlur: " + newBlur + " previousBlur: "
-                    + previousBlur + " delta: " + delta + " surface: " + blurSurface);
+        if (!hasOpaqueBg) {
+            newBlur = mAppTransitionOwner != null || mAppBlurRecovery != null
+                    || mStackedOverviewBlur > 0f
+                    ? getAppTransitionBlurRadius()
+                    : Math.max(newBlur, getAppTransitionBlurRadius());
+        }
+        boolean wantsEarlyWakeUp = (blurAmount > 0 && blurAmount < 1)
+                || (newBlur > 0 && (mAppTransitionOwner != null || mAppBlurRecovery != null));
+        if (skipSimilarBlur && surfaceTransaction == null && newBlur == previousBlur
+                && mLastBlurSurface == blurSurface && mLastSurfaceOpaque == isSurfaceOpaque
+                && wantsEarlyWakeUp == mInEarlyWakeUp) {
+            blurWorkspaceDepthTargets();
             return;
         }
         mCurrentBlur = newBlur;
-        Log.v(TAG, "Applying blur: " + mCurrentBlur + " to " + blurSurface + " applyImmediately: "
-                + applyImmediately);
+        mLastBlurSurface = blurSurface;
+        mLastSurfaceOpaque = isSurfaceOpaque;
+        if (DEBUG) Log.v(TAG, "Applying blur: " + mCurrentBlur + " to " + blurSurface
+                + " applyImmediately: " + applyImmediately);
 
         if (surfaceTransaction == null) {
             surfaceTransaction = new SurfaceTransaction();
@@ -251,7 +383,6 @@ public class BaseDepthController {
                 .setOpaque(isSurfaceOpaque);
         // Set early wake-up flags when we know we're executing an expensive operation, this way
         // SurfaceFlinger will adjust its internal offsets to avoid jank.
-        boolean wantsEarlyWakeUp = blurAmount > 0 && blurAmount < 1;
         if (wantsEarlyWakeUp && !mInEarlyWakeUp) {
             setEarlyWakeup(surfaceTransaction.getTransaction(), true);
         } else if (!wantsEarlyWakeUp && mInEarlyWakeUp) {
@@ -259,7 +390,7 @@ public class BaseDepthController {
         }
 
         if (applyImmediately || mSurfaceTransactionApplier == null) {
-            Log.d(TAG, "Applying blur immediately, mSurfaceTransactionApplier is null? "
+            if (DEBUG) Log.d(TAG, "Applying blur immediately, mSurfaceTransactionApplier is null? "
                     + (mSurfaceTransactionApplier == null));
             surfaceTransaction.getTransaction().apply();
         } else {
@@ -308,27 +439,35 @@ public class BaseDepthController {
     /** @return {@code true} if the workspace should be blurred. */
     @VisibleForTesting
     public boolean blurWorkspaceDepthTargets() {
-        if (!Flags.allAppsBlur()) {
+        if (!Flags.allAppsBlur() && mAppTransitionOwner == null && mAppBlurRecovery == null
+                && mStackedOverviewBlur == 0f && mWorkspaceBlurRadius == 0) {
             return false;
         }
         StateManager<LauncherState, Launcher> stateManager = mLauncher.getStateManager();
         LauncherState targetState = stateManager.getTargetState() != null
                 ? stateManager.getTargetState() : stateManager.getState();
         // Only blur workspace if the current state wants to blur based on the target state.
-        boolean shouldBlurWorkspace =
-                stateManager.getCurrentStableState().shouldBlurWorkspace(targetState);
-
-        RenderEffect blurEffect = shouldBlurWorkspace && mCurrentBlur > 0
-                ? RenderEffect.createBlurEffect(mCurrentBlur, mCurrentBlur, Shader.TileMode.DECAL)
-                // If blur is not desired, clear the blur effect from the depth targets.
-                : null;
-        Log.d(TAG, "shouldBlurWorkspace: " + shouldBlurWorkspace
+        boolean shouldBlurWorkspace = Flags.allAppsBlur()
+                && stateManager.getCurrentStableState().shouldBlurWorkspace(targetState);
+        final int blurRadius = Math.max(shouldBlurWorkspace ? mCurrentBlur : 0,
+                getAppTransitionBlurRadius());
+        if (mWorkspaceBlurRadius == blurRadius) {
+            return shouldBlurWorkspace || blurRadius > 0;
+        }
+        mWorkspaceBlurRadius = blurRadius;
+        RenderEffect effect = mWorkspaceBlurEffects.get(blurRadius);
+        if (blurRadius > 0 && effect == null) {
+            effect = RenderEffect.createBlurEffect(blurRadius, blurRadius, Shader.TileMode.DECAL);
+            mWorkspaceBlurEffects.put(blurRadius, effect);
+        }
+        if (DEBUG) Log.d(TAG, "shouldBlurWorkspace: " + shouldBlurWorkspace
                 + " targetState: " + targetState
                 + " currentStableState: " + stateManager.getCurrentStableState()
                 + " mCurrentBlur: " + mCurrentBlur
                 + " mLauncher.getDepthBlurTargets(): " + mLauncher.getDepthBlurTargets());
-        mLauncher.getDepthBlurTargets().forEach(target -> target.setRenderEffect(blurEffect));
-        return shouldBlurWorkspace;
+        List<View> targets = mLauncher.getDepthBlurTargets();
+        for (int i = 0; i < targets.size(); i++) targets.get(i).setRenderEffect(effect);
+        return shouldBlurWorkspace || blurRadius > 0;
     }
 
     private void setDepth(float depth) {

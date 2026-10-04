@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2024 The Android Open Source Project
+ * Modified by the ArkUI Project in 2026 for window-animation completion and handoff.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -40,19 +41,31 @@ class AnimatorBackState(private val springAnim: RectFSpringAnim?, private val an
 
     override fun addOnAnimCompleteCallback(r: Runnable) {
         val animWait = RunnableList()
-        springAnim?.addAnimatorListener(forEndCallback(animWait::executeAllAndDestroy))
-            ?: anim?.addListener(forEndCallback(animWait::executeAllAndDestroy))
-            ?: animWait.executeAllAndDestroy()
+        if (springAnim != null) {
+            if (springAnim.isEnded) animWait.executeAllAndDestroy()
+            else springAnim.addAnimatorListener(forEndCallback(animWait::executeAllAndDestroy))
+        } else {
+            anim?.addListener(forEndCallback(animWait::executeAllAndDestroy))
+                ?: animWait.executeAllAndDestroy()
+        }
         animWait.add(r)
     }
 
     override fun applyToAnimationResult(result: AnimationResult, c: Context) {
+        // The window has its own clock. All-apps content may finish sooner, but Shell must
+        // retain the closing surface until the window completes or is explicitly cancelled.
+        springAnim?.takeUnless { it.isEnded }?.let { windowAnimation ->
+            val finishWindow = result.deferFinish(windowAnimation::cancel)
+            windowAnimation.addAnimatorListener(forEndCallback(finishWindow))
+        }
         result.setAnimation(anim, c)
     }
 
     override fun start(stateManager: StateManager<LauncherState, Launcher>) {
         if (anim != null) {
-            stateManager.setCurrentAnimation(anim)
+            // The transition manager may already have registered this exact AnimatorSet.
+            // Transfer its registration; cancelling it here sets its duration to zero.
+            stateManager.setCurrentAnimation(anim, anim)
         }
         anim?.start()
     }

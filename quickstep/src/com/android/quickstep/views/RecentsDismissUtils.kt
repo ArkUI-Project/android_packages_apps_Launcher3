@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2025 The Android Open Source Project
+ * Modified by the ArkUI Project in 2026 for stacked recent-app dismissal.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -621,6 +622,9 @@ constructor(
             .sortedBy { it.second }
 
     private fun willTaskBeVisibleAfterDismiss(taskView: TaskView, taskTranslation: Int): Boolean {
+        if (recentsView.isTaskVisibleDuringStackDismiss(taskView, taskTranslation.toFloat())) {
+            return true
+        }
         val screenStart = recentsView.pagedOrientationHandler.getPrimaryScroll(recentsView)
         val screenEnd =
             screenStart + recentsView.pagedOrientationHandler.getMeasuredSize(recentsView)

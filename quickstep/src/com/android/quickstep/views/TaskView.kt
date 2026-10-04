@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2017 The Android Open Source Project
+ * Modified by the ArkUI Project in 2026 for stacked recent apps.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -401,6 +402,7 @@ constructor(
     private var dismissTranslationX = 0f
         set(value) {
             field = value
+            recentsView?.onTaskDismissTranslationChanged(this)
             applyTranslationX()
         }
 
@@ -433,6 +435,24 @@ constructor(
             field = value
             applyTranslationY()
         }
+
+    var stackScale = 1f
+        private set
+    var stackTranslationX = 0f
+        private set
+    var stackAlpha = 1f
+        private set
+
+    /** Compose with dismissal, grid and fullscreen transforms instead of overwriting them. */
+    fun setStackTransform(scale: Float, translation: Float, alpha: Float) {
+        if (stackScale == scale && stackTranslationX == translation && stackAlpha == alpha) return
+        stackScale = scale
+        stackTranslationX = translation
+        stackAlpha = alpha
+        taskViewAlpha.get(Alpha.Stack.ordinal).value = alpha
+        applyScale()
+        applyTranslationX()
+    }
 
     // The following translation variables should only be used in the same orientation as Launcher.
     private var boxTranslationY = 0f
@@ -689,6 +709,7 @@ constructor(
     }
 
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        if (ev.action == MotionEvent.ACTION_DOWN && stackAlpha == 0f) return false
         val recentsView = recentsView ?: return false
         val splitSelectStateController = recentsView.splitSelectController
         // Disable taps for split selection animation unless we have a task not being selected
@@ -2017,7 +2038,8 @@ constructor(
     fun getSizeAdjustment(fullscreenEnabled: Boolean) = if (fullscreenEnabled) nonGridScale else 1f
 
     private fun applyScale() {
-        val scale = persistentScale * dismissScale * Utilities.mapRange(modalness, 1f, modalScale)
+        val scale = persistentScale * dismissScale * stackScale *
+            Utilities.mapRange(modalness, 1f, modalScale)
         scaleX = scale
         scaleY = scale
         updateFullscreenParams()
@@ -2030,6 +2052,7 @@ constructor(
                 taskResistanceTranslationX +
                 splitSelectTranslationX +
                 gridEndTranslationX +
+                stackTranslationX +
                 persistentTranslationX
     }
 
@@ -2100,6 +2123,7 @@ constructor(
     }
 
     fun resetPersistentViewTransforms() {
+        setStackTransform(1f, 0f, 1f)
         nonGridTranslationX = 0f
         gridTranslationX = 0f
         gridTranslationY = 0f
@@ -2163,6 +2187,7 @@ constructor(
             Attach,
             Split,
             Modal,
+            Stack,
         }
 
         private enum class SettledProgress {

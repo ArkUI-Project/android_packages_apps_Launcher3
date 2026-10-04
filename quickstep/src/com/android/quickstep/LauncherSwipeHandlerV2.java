@@ -1,4 +1,5 @@
 /*
+ * Modified by the ArkUI Project in 2026 for landscape app return animations.
  * Copyright (C) 2020 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -49,6 +50,7 @@ import com.android.launcher3.views.FloatingIconView;
 import com.android.launcher3.views.FloatingView;
 import com.android.launcher3.widget.LauncherAppWidgetHostView;
 import com.android.quickstep.util.ActiveGestureLog;
+import com.android.quickstep.util.LandscapeAppAnimation;
 import com.android.quickstep.util.RectFSpringAnim;
 import com.android.quickstep.util.ScalingWorkspaceRevealAnim;
 import com.android.quickstep.util.TaskViewSimulator;
@@ -119,6 +121,12 @@ public class LauncherSwipeHandlerV2 extends AbsSwipeUpHandler<
         if (mHandOffAnimationToHome || !canUseWorkspaceView || appCanEnterPip || mIsSwipeForSplit) {
             return new LauncherHomeAnimationFactory() {
 
+                @Override
+                public boolean supportsLandscapeAnimation() {
+                    return !mHandOffAnimationToHome && !appCanEnterPip && !mIsSwipeForSplit
+                            && targetTaskView == null;
+                }
+
                 @Nullable
                 @Override
                 public TaskView getTargetTaskView() {
@@ -159,6 +167,11 @@ public class LauncherSwipeHandlerV2 extends AbsSwipeUpHandler<
             @Nullable
             private RectF mTargetRect;
 
+            @Override
+            public boolean supportsLandscapeAnimation() {
+                return true;
+            }
+
             @Nullable
             @Override
             protected View getViewIgnoredInWorkspaceRevealAnimation() {
@@ -187,7 +200,11 @@ public class LauncherSwipeHandlerV2 extends AbsSwipeUpHandler<
                 mSiblingAnimation.addAnimatorListener(floatingIconView);
                 floatingIconView.setOnTargetChangeListener(
                         mSiblingAnimation::onTargetPositionChanged);
-                floatingIconView.setFastFinishRunnable(mSiblingAnimation::end);
+                floatingIconView.setFastFinishRunnable(() -> {
+                    // Cleanup after a cancellation can re-enter fastFinish. Only a live
+                    // animation interrupted by Launcher should finalize the home transition.
+                    if (mSiblingAnimation.isRunning()) finishHomeAnimationAtCurrentPosition();
+                });
             }
 
             @Override
@@ -199,9 +216,16 @@ public class LauncherSwipeHandlerV2 extends AbsSwipeUpHandler<
                 // We want the icon alpha to be 1 once this threshold is met, so that it can be
                 // seen morphing into the icon shape. But before the threshold, we want to limit
                 // the alpha to reduce the blur effect behind the window.
-                float iconAlpha = Interpolators.clampToProgress(progress, 0f, windowAlphaThreshold);
+                float iconAlpha = getTargetTaskView() == null
+                        ? 1f - mMotion.windowAlpha(progress)
+                        : Interpolators.clampToProgress(progress, 0f, windowAlphaThreshold);
                 floatingIconView.update(iconAlpha, currentRect, progress, windowAlphaThreshold,
                         radius, false, overlayAlpha);
+                if (mLandscapeRotation != 0f) {
+                    floatingIconView.setAppRotation(-mLandscapeRotation
+                            * (1f - mMotion.rotationProgress(progress)),
+                            currentRect);
+                }
             }
 
             @Override
@@ -361,6 +385,39 @@ public class LauncherSwipeHandlerV2 extends AbsSwipeUpHandler<
 
     private class LauncherHomeAnimationFactory extends HomeAnimationFactory {
 
+        @Override
+        public @Nullable View getAnimationHost() {
+            return mContainer == null ? null : mContainer.getDragLayer();
+        }
+
+        @Nullable private RectFSpringAnim mWindowAnimation;
+
+        @Override
+        public void setAnimation(RectFSpringAnim animation) {
+            mWindowAnimation = animation;
+        }
+
+        @Override
+        public void beginAppTransition(Object owner) {
+            if (mContainer != null) {
+                mContainer.getDepthController().beginAppTransition(owner, false);
+            }
+        }
+
+        @Override
+        public void setAppTransitionProgress(Object owner, float progress) {
+            if (mContainer != null) {
+                mContainer.getDepthController().setAppTransitionProgress(owner, progress);
+            }
+        }
+
+        @Override
+        public void endAppTransition(Object owner) {
+            if (mContainer != null) {
+                mContainer.getDepthController().endAppTransition(owner);
+            }
+        }
+
         /**
          * Returns a view which should be excluded from the Workspace animation, or null if there
          * is no view to exclude.
@@ -392,7 +449,8 @@ public class LauncherSwipeHandlerV2 extends AbsSwipeUpHandler<
         protected void playScalingRevealAnimation() {
             if (mContainer != null) {
                 new ScalingWorkspaceRevealAnim(
-                        mContainer, null /* siblingAnimation */, null /* windowTargetRect */,
+                        mContainer, mWindowAnimation,
+                        mWindowAnimation == null ? null : mWindowAnimation.getTargetRect(),
                         true /* playAlphaReveal */, true /* playBlur */).start();
             }
         }

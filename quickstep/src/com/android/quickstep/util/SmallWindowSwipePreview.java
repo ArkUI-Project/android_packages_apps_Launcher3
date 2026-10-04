@@ -4,6 +4,9 @@
  */
 package com.android.quickstep.util;
 
+import android.animation.Animator;
+import android.animation.AnimatorListenerAdapter;
+import android.animation.ValueAnimator;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
@@ -11,9 +14,11 @@ import android.graphics.ColorFilter;
 import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.graphics.PixelFormat;
+import android.graphics.PointF;
 import android.graphics.Rect;
 import android.graphics.RectF;
 import android.graphics.drawable.Drawable;
+import android.os.SystemClock;
 import android.view.RemoteAnimationTarget;
 import android.view.View;
 import android.view.WindowManager;
@@ -25,6 +30,7 @@ import androidx.dynamicanimation.animation.SpringForce;
 import com.android.internal.arkui.SmallWindowBounds;
 import com.android.internal.graphics.drawable.BackgroundBlurDrawable;
 import com.android.launcher3.Utilities;
+import com.android.launcher3.anim.DesktopAnimationSettings;
 import com.android.quickstep.RemoteTargetGluer.RemoteTargetHandle;
 import com.android.quickstep.util.SurfaceTransaction.SurfaceProperties;
 
@@ -48,6 +54,7 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
     private final WindowManager mWindowManager;
     private final Consumer<Boolean> mBlurListener;
     private final Runnable mOnVisualUpdate;
+    private final DesktopAnimationSettings mMotion;
     private final boolean mWasBelowRecents;
     private final SpringAnimation mSplitSpring;
     private final SpringAnimation mWindowSpring;
@@ -57,6 +64,9 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
     private final Rect mCrop = new Rect();
     private final RectF mNormal = new RectF();
     private final RectF mCurrent = new RectF();
+    private final RectF mVelocitySample = new RectF();
+    private final PointF mSizeVelocity = new PointF();
+    private long mVelocitySampleTime;
     private final RectF mHover = new RectF();
     private final RectF mReleaseStart = new RectF();
     private final RectF mReleaseEnd = new RectF();
@@ -78,8 +88,11 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
     private float mReleaseRecentsAlpha;
     private boolean mBlurEnabled;
     private boolean mClosed;
+    private boolean mTransformDetached;
+    private ValueAnimator mTargetFade;
     private boolean mReleasing;
     private boolean mToSmallWindow;
+    private boolean mShowRecentsOnRelease;
     private int mTarget;
     private Bitmap mSnapshot;
     public float progress;
@@ -88,6 +101,7 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
             RemoteAnimationTarget task, View overlayHost, boolean canSplit,
             Runnable onVisualUpdate) {
         mHandle = handle;
+        mMotion = DesktopAnimationSettings.read(context);
         mTask = task;
         mOverlayHost = overlayHost;
         mCanSplit = canSplit;
@@ -133,6 +147,13 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
         return new RectF(mCurrent);
     }
 
+    public PointF getSizeVelocity() {
+        // A held finger releases from rest; a duplicate transaction in one frame should not
+        // erase the last measured resize velocity.
+        return SystemClock.uptimeMillis() - mVelocitySampleTime < 100
+                ? new PointF(mSizeVelocity.x, mSizeVelocity.y) : new PointF();
+    }
+
     public float getVisibleCornerRadius() {
         mMatrix.getValues(mMatrixValues);
         return mRadius * (float) Math.hypot(mMatrixValues[Matrix.MSCALE_X],
@@ -176,11 +197,12 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
 
     public float getRecentsAlpha() {
         if (mReleasing) {
-            return mReleaseRecentsAlpha + ((mToSmallWindow ? 0f : 1f)
+            return mReleaseRecentsAlpha + ((mShowRecentsOnRelease ? 1f : 0f)
                     - mReleaseRecentsAlpha) * progress;
         }
-        // Sibling cards remain visible while the circle grows and approaches the app.
-        return (1f - clamp((mWindowReveal - .98f) / .02f)) * (1f - .2f * mSplitReveal);
+        // Hide siblings with the targets' reveal, before the app reaches either circle.
+        // Waiting for the small-window material to finish growing exposed the whole stack.
+        return 1f - Math.max(mVisibility, Math.max(mSplitReveal, mWindowReveal));
     }
 
     /** The app follows the finger directly; only the target material has a settling response. */
@@ -189,7 +211,9 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
         mPointerX = Utilities.boundToRange(x, 0f, mWidth);
         mPointerY = Utilities.boundToRange(y, 0f, mHeight);
         // The reference introduces the targets as the overview card approaches half-screen width.
-        mVisibility = clamp((distance / mHeight - .32f) / .10f);
+        mVisibility = clamp((distance / mHeight - mMotion.swipeTargetStart)
+                / mMotion.swipeTargetRange);
+        mVisibility = mVisibility * mVisibility * (3f - 2f * mVisibility);
         float vertical = clamp((.66f - mPointerY / mHeight) / .26f);
         float horizontal = clamp((Math.abs(mPointerX / mWidth - .5f) - .04f) / .22f);
         // A straight swipe to the top must work without a pause or a sideways detour.
@@ -248,6 +272,18 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
                 mHeight - height - 24 * mDensity);
         mHover.set(left, top, left + width, top + height);
         interpolate(mNormal, mHover, progress, mCurrent);
+        long now = SystemClock.uptimeMillis();
+        long dt = now - mVelocitySampleTime;
+        if (dt >= 4) {
+            if (!mVelocitySample.isEmpty() && dt < 100) {
+                mSizeVelocity.set((mCurrent.width() - mVelocitySample.width()) / dt,
+                        (mCurrent.height() - mVelocitySample.height()) / dt);
+            } else {
+                mSizeVelocity.set(0f, 0f);
+            }
+            mVelocitySample.set(mCurrent);
+            mVelocitySampleTime = now;
+        }
         transform(mNormalMatrix, mNormal, mCurrent);
         mRadius = mNormalRadius + (surfaceRadius(14 * mDensity) - mNormalRadius) * progress;
         builder.setMatrix(mMatrix).setWindowCrop(mCrop).setCornerRadius(mRadius);
@@ -255,10 +291,11 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
     }
 
     /** Freeze the actual last frame before starting a release or cancellation animator. */
-    public void beginRelease(boolean toSmallWindow) {
+    public void beginRelease(boolean toSmallWindow, boolean showRecents) {
         mReleaseRecentsAlpha = getRecentsAlpha();
         mReleasing = true;
         mToSmallWindow = toSmallWindow;
+        mShowRecentsOnRelease = showRecents;
         mSplitSpring.cancel();
         mWindowSpring.cancel();
         mReleaseSplitReveal = mSplitReveal;
@@ -288,14 +325,43 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
     public void close() {
         if (mClosed) return;
         mClosed = true;
+        if (mTargetFade != null) mTargetFade.cancel();
         mSnapshot = null;
         mSplitSpring.cancel();
         mWindowSpring.cancel();
         mWindowManager.removeCrossWindowBlurEnabledListener(mBlurListener);
-        mHandle.getTaskViewSimulator().setGestureTransform(null);
-        mHandle.getTaskViewSimulator().setDrawsBelowRecents(mWasBelowRecents);
+        detachTransform();
         mTargets.close();
         mOverlayHost.getOverlay().remove(mTargets);
+    }
+
+    private void detachTransform() {
+        if (mTransformDetached) return;
+        mTransformDetached = true;
+        mHandle.getTaskViewSimulator().setGestureTransform(null);
+        mHandle.getTaskViewSimulator().setDrawsBelowRecents(mWasBelowRecents);
+    }
+
+    /** Release the window immediately; only the two target indicators finish fading out. */
+    public void finishToHome() {
+        if (mClosed || mTargetFade != null) return;
+        mSplitSpring.cancel();
+        mWindowSpring.cancel();
+        detachTransform();
+        mTargetFade = ValueAnimator.ofFloat(mVisibility, 0f);
+        mTargetFade.setDuration(mMotion.swipeTargetFade);
+        mTargetFade.setInterpolator(mMotion.interpolator);
+        mTargetFade.addUpdateListener(animation -> {
+            mVisibility = (float) animation.getAnimatedValue();
+            mTargets.update();
+        });
+        mTargetFade.addListener(new AnimatorListenerAdapter() {
+            @Override public void onAnimationEnd(Animator animation) {
+                mTargetFade = null;
+                close();
+            }
+        });
+        mTargetFade.start();
     }
 
     private void transform(Matrix source, RectF from, RectF to) {
@@ -350,8 +416,8 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
             float visibility = mVisibility * (mReleasing ? 1f - progress : 1f);
             float split = mReleasing ? mReleaseSplitReveal * (1f - progress) : mSplitReveal;
             float small = mReleasing ? mReleaseWindowReveal * (1f - progress) : mWindowReveal;
-            float circleRadius = mWidth * .065f;
-            float circleY = mHeight * .14f;
+            float circleRadius = mWidth * .055f;
+            float circleY = mHeight * .128f;
             float padding = 5 * mDensity;
             if (mCanSplit) {
                 setCircle(mCircle, mWidth * .14f, circleY, circleRadius);

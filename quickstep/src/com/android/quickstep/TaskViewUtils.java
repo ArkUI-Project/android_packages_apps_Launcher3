@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2019 The Android Open Source Project
+ * Modified by the ArkUI Project in 2026 to launch from stacked card positions.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -62,6 +63,7 @@ import android.view.RemoteAnimationTarget;
 import android.view.Surface;
 import android.view.SurfaceControl;
 import android.view.View;
+import android.view.animation.Interpolator;
 import android.window.TransitionInfo;
 import android.window.WindowAnimationState;
 
@@ -76,6 +78,7 @@ import com.android.launcher3.anim.AnimatedFloat;
 import com.android.launcher3.anim.AnimationSuccessListener;
 import com.android.launcher3.anim.AnimatorPlaybackController;
 import com.android.launcher3.anim.PendingAnimation;
+import com.android.launcher3.anim.DesktopAnimationSettings;
 import com.android.launcher3.model.data.ItemInfo;
 import com.android.launcher3.statehandlers.DepthController;
 import com.android.launcher3.statemanager.StateManager;
@@ -84,6 +87,7 @@ import com.android.launcher3.taskbar.TaskbarInteractor;
 import com.android.launcher3.util.DisplayController;
 import com.android.quickstep.RemoteTargetGluer.RemoteTargetHandle;
 import com.android.quickstep.util.MultiValueUpdateListener;
+import com.android.quickstep.util.LandscapeAppAnimation;
 import com.android.quickstep.util.RemoteTargetHandleUtilKt;
 import com.android.quickstep.util.SurfaceTransaction;
 import com.android.quickstep.util.SurfaceTransaction.SurfaceProperties;
@@ -110,6 +114,12 @@ import java.util.function.Consumer;
 public final class TaskViewUtils {
 
     private TaskViewUtils() {}
+
+    /** Shared by activity-based and window-based overview launchers. */
+    public static long getRecentsLaunchDuration(Context context, TaskView taskView) {
+        return taskView.containsMultipleTasks() || taskView instanceof DesktopTaskView
+                ? RECENTS_LAUNCH_DURATION : DesktopAnimationSettings.read(context).recentsDuration;
+    }
 
     private static final Rect TEMP_THUMBNAIL_BOUNDS = new Rect();
     private static final Rect TEMP_FULLSCREEN_BOUNDS = new Rect();
@@ -202,6 +212,28 @@ public final class TaskViewUtils {
         Context context = taskView.getContext();
         T container = RecentsViewContainer.containerFromContext(context);
         DeviceProfile dp = container.getDeviceProfile();
+        final DesktopAnimationSettings motion = DesktopAnimationSettings.read(context);
+        final boolean singleAppLaunch = !taskView.containsMultipleTasks()
+                && !(taskView instanceof DesktopTaskView);
+        final Interpolator launchInterpolator = singleAppLaunch
+                ? motion.interpolator : TOUCH_RESPONSE;
+        final AnimatedFloat blurProgress = new AnimatedFloat();
+        if (depthController != null && singleAppLaunch) {
+            out.addFloat(blurProgress, AnimatedFloat.VALUE, 0f, 1f, LINEAR);
+            out.addListener(new AnimatorListenerAdapter() {
+                @Override
+                public void onAnimationStart(Animator animation) {
+                    depthController.beginAppTransition(blurProgress, true, out.getDuration());
+                }
+
+                @Override
+                public void onAnimationEnd(Animator animation) {
+                    depthController.endAppTransition(blurProgress);
+                }
+            });
+            out.addOnFrameCallback(() -> depthController.setAppTransitionProgress(
+                    blurProgress, blurProgress.value));
+        }
 
         RemoteTargetHandle[] remoteTargetHandles;
         RemoteTargetHandle[] recentsViewHandles = recentsView.getRemoteTargetHandles();
@@ -281,20 +313,46 @@ public final class TaskViewUtils {
 
         for (RemoteTargetHandle targetHandle : remoteTargetHandles) {
             TaskViewSimulator tvsLocal = targetHandle.getTaskViewSimulator();
+            RemoteAnimationTarget openingTarget = targetHandle.getTransformParams()
+                    .getTargetSet().getFirstAppTarget();
+            final boolean landscapeLaunch = singleAppLaunch && openingTarget != null
+                    && LandscapeAppAnimation.getOpeningRotation(context, dp, openingTarget,
+                            openingTarget.rotationChange) != 0f;
+            if (singleAppLaunch && openingTarget != null) {
+                tvsLocal.prepareLandscapeLaunch(openingTarget, motion);
+                out.addFloat(tvsLocal.landscapeLaunchProgress, AnimatedFloat.VALUE,
+                        0f, 1f, launchInterpolator);
+                out.addEndListener(tvsLocal::finishLandscapeLaunch);
+            }
+            final float stackScale = taskView.getStackScale();
+            final float stackTranslation = taskView.getStackTranslationX();
+            final float stackAlpha = taskView.getStackAlpha();
+            if (stackScale != 1f || stackTranslation != 0f || stackAlpha != 1f) {
+                tvsLocal.setStackTransform(stackScale, stackTranslation, stackAlpha);
+                out.addOnFrameCallback(() -> {
+                    float progress = Utilities.boundToRange(tvsLocal.fullScreenProgress.value,
+                            0f, 1f);
+                    tvsLocal.setStackTransform(Utilities.mapRange(progress, stackScale, 1f),
+                            stackTranslation * (1f - progress),
+                            Utilities.mapRange(progress, stackAlpha, 1f));
+                });
+                out.addEndListener(success -> recentsView.updateCurveProperties());
+            }
             out.setFloat(tvsLocal.fullScreenProgress,
-                    AnimatedFloat.VALUE, 1, TOUCH_RESPONSE);
+                    AnimatedFloat.VALUE, 1, launchInterpolator);
             out.setFloat(tvsLocal.recentsViewScale,
                     AnimatedFloat.VALUE, tvsLocal.getFullScreenScale(),
-                    TOUCH_RESPONSE);
+                    launchInterpolator);
             if (!enableGridOnlyOverview()) {
                 out.setFloat(tvsLocal.recentsViewScroll, AnimatedFloat.VALUE, 0,
-                        TOUCH_RESPONSE);
+                        launchInterpolator);
             }
 
             out.addListener(new AnimatorListenerAdapter() {
                 @Override
                 public void onAnimationStart(Animator animation) {
                     super.onAnimationStart(animation);
+                    if (landscapeLaunch) tvsLocal.apply(targetHandle.getTransformParams());
                     final SurfaceTransaction showTransaction = new SurfaceTransaction();
                     for (int i = targets.apps.length - 1; i >= 0; --i) {
                         showTransaction.getTransaction().show(targets.apps[i].leash);
@@ -314,11 +372,9 @@ public final class TaskViewUtils {
                     }
                 }
             });
-            out.addOnFrameCallback(() -> {
-                for (RemoteTargetHandle handle : remoteTargetHandles) {
-                    handle.getTaskViewSimulator().apply(handle.getTransformParams());
-                }
-            });
+            // Each simulator submits once per frame, after its stack/progress properties and
+            // before navigation-bar geometry reads its matrix.
+            out.addOnFrameCallback(() -> tvsLocal.apply(targetHandle.getTransformParams()));
             if (navBarTarget != null) {
                 final Rect cropRect = new Rect();
                 out.addOnFrameListener(new MultiValueUpdateListener() {
@@ -329,21 +385,21 @@ public final class TaskViewUtils {
                             out.getDuration()));
                     FloatProp mNavFadeIn = new FloatProp(0f, 1f, clampToDuration(
                             NAV_FADE_IN_INTERPOLATOR,
-                            ANIMATION_DELAY_NAV_FADE_IN,
-                            ANIMATION_NAV_FADE_IN_DURATION,
+                            Math.max(0, out.getDuration() - ANIMATION_NAV_FADE_IN_DURATION),
+                            Math.min(ANIMATION_NAV_FADE_IN_DURATION, out.getDuration()),
                             out.getDuration()));
 
                     @Override
                     public void onUpdate(float percent, boolean initOnly) {
-
-
                         // TODO Do we need to operate over multiple TVSs for the navbar leash?
                         for (RemoteTargetHandle handle : remoteTargetHandles) {
                             SurfaceTransaction transaction = new SurfaceTransaction();
                             SurfaceProperties navBuilder =
                                     transaction.forSurface(navBarTarget.leash);
 
-                            if (mNavFadeIn.value > mNavFadeIn.getStartValue()) {
+                            if (landscapeLaunch) {
+                                navBuilder.setAlpha(0f);
+                            } else if (mNavFadeIn.value > mNavFadeIn.getStartValue()) {
                                 TaskViewSimulator taskViewSimulator = handle.getTaskViewSimulator();
                                 taskViewSimulator.getCurrentCropRect().round(cropRect);
                                 navBuilder.setMatrix(taskViewSimulator.getCurrentMatrix())
@@ -656,7 +712,11 @@ public final class TaskViewUtils {
             Log.w(TAG, "composeRecentsLaunchAnimator - no TaskView to launch");
             return;
         }
-        PendingAnimation pa = new PendingAnimation(RECENTS_LAUNCH_DURATION);
+        final DesktopAnimationSettings motion = DesktopAnimationSettings.read(v.getContext());
+        final long launchDuration = taskView.containsMultipleTasks()
+                || taskView instanceof DesktopTaskView ? RECENTS_LAUNCH_DURATION
+                        : motion.recentsDuration;
+        PendingAnimation pa = new PendingAnimation(launchDuration);
         createRecentsWindowAnimator(recentsView, taskView, skipLauncherChanges, appTargets,
                 wallpaperTargets, nonAppTargets, depthController, transitionInfo,
                 appearedTaskId, pa);
@@ -689,8 +749,9 @@ public final class TaskViewUtils {
                 raController.setWillFinishToHome(false);
             }
             launcherAnim = recentsView.createAdjacentPageAnimForTaskLaunch(taskView);
-            launcherAnim.setInterpolator(Interpolators.TOUCH_RESPONSE);
-            launcherAnim.setDuration(RECENTS_LAUNCH_DURATION);
+            launcherAnim.setInterpolator(taskView.containsMultipleTasks()
+                    || taskView instanceof DesktopTaskView ? TOUCH_RESPONSE : motion.interpolator);
+            launcherAnim.setDuration(launchDuration);
 
             windowAnimEndListener = new AnimationSuccessListener() {
                 @Override
@@ -742,10 +803,10 @@ public final class TaskViewUtils {
             };
         } else {
             AnimatorPlaybackController controller =
-                    stateManager.createAnimationToNewWorkspace(NORMAL, RECENTS_LAUNCH_DURATION);
+                    stateManager.createAnimationToNewWorkspace(NORMAL, launchDuration);
             controller.dispatchOnStart();
             childStateAnimation = controller.getTarget();
-            launcherAnim = controller.getAnimationPlayer().setDuration(RECENTS_LAUNCH_DURATION);
+            launcherAnim = controller.getAnimationPlayer().setDuration(launchDuration);
             windowAnimEndListener = new AnimatorListenerAdapter() {
                 @Override
                 public void onAnimationEnd(Animator animation) {

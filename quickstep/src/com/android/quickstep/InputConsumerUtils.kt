@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2024 The Android Open Source Project
+ * Modified by the ArkUI Project in 2026 to route interrupted launches to app gestures.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -45,6 +46,7 @@ import com.android.quickstep.util.ActiveGestureErrorDetector
 import com.android.quickstep.util.ActiveGestureLog
 import com.android.quickstep.util.ActiveGestureLog.CompoundString
 import com.android.quickstep.util.ActiveGestureProtoLogProxy
+import com.android.quickstep.util.AppWindowAnimationState
 import com.android.quickstep.views.RecentsViewContainer
 import com.android.quickstep.window.RecentsWindowManager
 import com.android.systemui.shared.system.InputChannelCompat
@@ -534,6 +536,17 @@ object InputConsumerUtils {
 
         reasonString.append("%skeyguard is not showing occluded", SUBSTRING_PREFIX)
 
+        if (
+            event.actionMasked == MotionEvent.ACTION_DOWN &&
+                !gestureState.isTrackpadGesture &&
+                !deviceState.isScreenPinningActive &&
+                !deviceState.isOverviewDisabled &&
+                !ignoreNonTrackpadMouseEvent(context, gestureState, event)
+        ) {
+            AppWindowAnimationState.captureOpeningForGesture(gestureState.displayId)?.let {
+                gestureState.setAppAnimationHandoff(context, it)
+            }
+        }
         val runningTask = gestureState.runningTask
         val containerInterface = gestureState.getContainerInterface<S, T>()
         // Use launcher input consumer for sharesheets on top of home.
@@ -574,7 +587,33 @@ object InputConsumerUtils {
                 overviewComponentObserver.isHomeAndOverviewSame &&
                 containerInterface.isLauncherOverlayShowing
 
-        return if (containerInterface.isInLiveTileMode()) {
+        return if (
+            gestureState.hasAppAnimationHandoff() &&
+                !deviceState.isGestureBlockedTask(runningTask)
+        ) {
+            // Launcher can still be resumed while its app-opening animation is on screen.
+            // Routing this to LauncherWithoutFocusInputConsumer waits until UP to start Home,
+            // allowing the app to finish expanding before any closing geometry is sampled.
+            reasonString.append(
+                "%scatching opening app taskId=%d with OtherActivityInputConsumer",
+                SUBSTRING_PREFIX,
+                gestureState.topRunningTaskId,
+            )
+            createOtherActivityInputConsumer<S, T>(
+                context,
+                swipeUpHandlerFactory,
+                overviewComponentObserver,
+                deviceState,
+                taskAnimationManager,
+                inputMonitorCompat,
+                onCompleteCallback,
+                inputEventReceiver,
+                gestureState,
+                event,
+                false,
+                rotationTouchHelper,
+            )
+        } else if (containerInterface.isInLiveTileMode()) {
             createLauncherInputConsumer<S, T>(
                 userUnlocked,
                 taskAnimationManager,
@@ -826,8 +865,9 @@ object InputConsumerUtils {
     ): InputConsumer where T : RecentsViewContainer, T : StatefulContainer<S> {
         val containerInterface = gestureState.getContainerInterface<S, T>()
         val shouldDefer =
-            (!overviewComponentObserver.isHomeAndOverviewSame ||
-                containerInterface.deferStartingActivity(deviceState, event))
+            !gestureState.hasAppAnimationHandoff() &&
+                (!overviewComponentObserver.isHomeAndOverviewSame ||
+                    containerInterface.deferStartingActivity(deviceState, event))
         val disableHorizontalSwipe =
             deviceState.isInExclusionRegion(event) &&
                 (containerInterface.getCreatedContainer() !is RecentsWindowManager || !isHomeTask)

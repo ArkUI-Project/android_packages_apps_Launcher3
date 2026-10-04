@@ -1,4 +1,5 @@
 /*
+ * Modified by the ArkUI Project in 2026 for atomic launch-to-gesture handoff.
  * Copyright (C) 2019 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -100,6 +101,7 @@ import com.android.wm.shell.recents.IRecentsAnimationController
 import com.android.wm.shell.recents.IRecentsAnimationRunner
 import com.android.wm.shell.shared.GroupedTaskInfo
 import com.android.wm.shell.shared.IShellTransitions
+import com.android.wm.shell.shared.ShellSharedConstants.KEY_EXTRA_RECENTS_START_HANDOFF
 import com.android.wm.shell.shared.bubbles.BubbleBarLocation
 import com.android.wm.shell.shared.bubbles.BubbleBarLocation.UpdateSource
 import com.android.wm.shell.shared.bubbles.logging.EntryPoint
@@ -1400,6 +1402,10 @@ class SystemUiProxy @Inject constructor(
                 getRecentsPendingIntent(displayId),
                 intent,
                 options.toBundle().apply {
+                    putBoolean(
+                        KEY_EXTRA_RECENTS_START_HANDOFF,
+                        listener is RecentsAnimationCallbacks && listener.canProvideStartFrame(),
+                    )
                     if (useSyntheticRecentsTransition) {
                         putBoolean("is_synthetic_recents_transition", true)
                     }

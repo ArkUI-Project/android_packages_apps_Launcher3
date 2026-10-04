@@ -1,3 +1,6 @@
+/* Modified by the ArkUI Project in 2026 to handle cancelled settings authentication.
+ * SPDX-License-Identifier: Apache-2.0
+ */
 package com.android.launcher3.lineage;
 
 import android.app.KeyguardManager;
@@ -23,6 +26,11 @@ public class LineageUtils {
      *                        device security or if lock screen is unlocked
      */
     public static void showLockScreen(Context context, String title, Runnable successRunnable) {
+        showLockScreen(context, title, successRunnable, () -> { });
+    }
+
+    public static void showLockScreen(Context context, String title, Runnable successRunnable,
+            Runnable cancelRunnable) {
         if (hasSecureKeyguard(context)) {
             final BiometricPrompt.AuthenticationCallback authenticationCallback =
                     new BiometricPrompt.AuthenticationCallback() {
@@ -34,7 +42,7 @@ public class LineageUtils {
 
                         @Override
                         public void onAuthenticationError(int errorCode, CharSequence errString) {
-                            //Do nothing
+                            cancelRunnable.run();
                         }
             };
 

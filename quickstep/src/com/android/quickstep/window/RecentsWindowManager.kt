@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2025 The Android Open Source Project
+ * Modified by the ArkUI Project in 2026 for configurable, interruptible app launches.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +17,7 @@
 
 package com.android.quickstep.window
 
+import android.animation.Animator
 import android.animation.AnimatorSet
 import android.app.ActivityOptions
 import android.app.ActivityTaskManager
@@ -45,7 +47,6 @@ import android.window.OnBackInvokedCallback
 import android.window.RemoteTransition
 import android.window.SplashScreen
 import androidx.annotation.UiThread
-import androidx.core.animation.addListener
 import androidx.core.view.isVisible
 import com.android.app.displaylib.PerDisplayInstanceProviderWithTeardown
 import com.android.app.displaylib.PerDisplayRepository
@@ -55,7 +56,6 @@ import com.android.launcher3.Flags.enablePredictiveBackInOverview
 import com.android.launcher3.LauncherAnimationRunner
 import com.android.launcher3.LauncherAnimationRunner.RemoteAnimationFactory
 import com.android.launcher3.LauncherRootView
-import com.android.launcher3.QuickstepTransitionManager.RECENTS_LAUNCH_DURATION
 import com.android.launcher3.QuickstepTransitionManager.STATUS_BAR_TRANSITION_DURATION
 import com.android.launcher3.QuickstepTransitionManager.STATUS_BAR_TRANSITION_PRE_DELAY
 import com.android.launcher3.R
@@ -68,6 +68,7 @@ import com.android.launcher3.desktop.DesktopRecentsTransitionController
 import com.android.launcher3.model.data.ItemInfo
 import com.android.launcher3.statemanager.StateManager
 import com.android.launcher3.statemanager.StateManager.AtomicAnimationFactory
+import com.android.launcher3.anim.AnimationSuccessListener
 import com.android.launcher3.statemanager.StatefulContainer
 import com.android.launcher3.taskbar.TaskbarInteractor
 import com.android.launcher3.testing.TestLogging
@@ -509,12 +510,12 @@ constructor(
                                 nonApps,
                             )
                             .apply {
-                                addListener(
-                                    onEnd = {
+                                addListener(object : AnimationSuccessListener() {
+                                    override fun onAnimationSuccess(animation: Animator) {
                                         recentsView.resetTaskVisuals()
                                         stateManager.reapplyState()
                                     }
-                                )
+                                })
                             }
                     callback.setAnimation(
                         anim,
@@ -535,15 +536,16 @@ constructor(
                 activityLaunchAnimationRunner,
                 /* startAtFrontOfQueue=*/ true,
             )
+        val duration = TaskViewUtils.getRecentsLaunchDuration(this, taskView)
         val options =
             ActivityOptions.makeRemoteAnimation(
                 RemoteAnimationAdapter(
                     wrapper,
-                    RECENTS_LAUNCH_DURATION.toLong(),
-                    (RECENTS_LAUNCH_DURATION -
+                    duration,
+                    (duration -
                             STATUS_BAR_TRANSITION_DURATION -
                             STATUS_BAR_TRANSITION_PRE_DELAY)
-                        .toLong(),
+                        .coerceAtLeast(0L),
                 ),
                 RemoteTransition(
                     wrapper.toRemoteTransition(),
@@ -570,7 +572,8 @@ constructor(
         nonAppTargets: Array<RemoteAnimationTarget>,
     ): AnimatorSet {
         val animatorSet = AnimatorSet()
-        val pendingAnimation = PendingAnimation(RECENTS_LAUNCH_DURATION.toLong())
+        val pendingAnimation =
+            PendingAnimation(TaskViewUtils.getRecentsLaunchDuration(this, taskView))
         TaskViewUtils.createRecentsWindowAnimator(
             recentsView,
             taskView,

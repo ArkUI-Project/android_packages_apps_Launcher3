@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2022 The Android Open Source Project
+ * Modified by the ArkUI Project in 2026 to preserve the configured home scale on interruption.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -64,6 +65,7 @@ import com.android.launcher3.LauncherState;
 import com.android.launcher3.QuickstepTransitionManager;
 import com.android.launcher3.R;
 import com.android.launcher3.Utilities;
+import com.android.launcher3.anim.DesktopAnimationSettings;
 import com.android.launcher3.taskbar.TaskbarInteractor;
 import com.android.launcher3.uioverrides.QuickstepLauncher;
 import com.android.launcher3.util.DisplayController;
@@ -351,7 +353,9 @@ public class LauncherBackAnimationController {
             mLauncher.getDepthController().pauseBlursOnWindows(true);
             mLauncher.getDepthController().stateDepth.setValue(
                     LauncherState.BACKGROUND_APP.getDepth(mLauncher));
-            setLauncherScale(ScalingWorkspaceRevealAnim.MIN_SIZE);
+            float currentScale = mLauncher.getWorkspace().getScaleX();
+            setLauncherScale(currentScale != 1f ? currentScale
+                    : DesktopAnimationSettings.read(mLauncher).workspaceScale);
         }
         if (mScrimLayer == null) {
             addScrimLayer();

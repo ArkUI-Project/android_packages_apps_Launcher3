@@ -1,4 +1,5 @@
 /*
+ * Modified by the ArkUI Project in 2026 to rotate icons with landscape app transitions.
  * Copyright (C) 2019 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -184,6 +185,19 @@ public class FloatingIconView extends FrameLayout implements
             mFadeOutView.postAlpha(
                     1 - Math.min(1f, mapToRange(progress, 0, 0.15f, 0, 1, LINEAR)));
         }
+    }
+
+    /** Rotate the animated icon around the same visible center as its app window. */
+    public void setAppRotation(float degrees, RectF bounds) {
+        // ClipIconView.update positions/scales about (0, 0). Changing the pivot also changes
+        // scaling, so compensate for that translation before adding the rotation.
+        final float pivotX = bounds.width() / (2f * getScaleX());
+        final float pivotY = bounds.height() / (2f * getScaleY());
+        setPivotX(pivotX);
+        setPivotY(pivotY);
+        setTranslationX(getTranslationX() + pivotX * (getScaleX() - 1f));
+        setTranslationY(getTranslationY() + pivotY * (getScaleY() - 1f));
+        setRotation(degrees);
     }
 
     /**
@@ -499,8 +513,10 @@ public class FloatingIconView extends FrameLayout implements
     @Override
     public void fastFinish() {
         if (mFastFinishRunnable != null) {
-            mFastFinishRunnable.run();
+            Runnable finish = mFastFinishRunnable;
             mFastFinishRunnable = null;
+            // Cancellation can re-enter fastFinish through an animation factory's cleanup.
+            finish.run();
         }
         if (mLoadIconSignal != null) {
             mLoadIconSignal.cancel();
@@ -704,6 +720,9 @@ public class FloatingIconView extends FrameLayout implements
     }
 
     private void recycle() {
+        setRotation(0);
+        setPivotX(0);
+        setPivotY(0);
         setTranslationX(0);
         setTranslationY(0);
         setScaleX(1);

@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2020 The Android Open Source Project
+ * Modified by the ArkUI Project in 2026 for stacked cards and interruptible landscape motion.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -46,6 +47,7 @@ import androidx.annotation.Nullable;
 import com.android.launcher3.DeviceProfile;
 import com.android.launcher3.Utilities;
 import com.android.launcher3.anim.AnimatedFloat;
+import com.android.launcher3.anim.DesktopAnimationSettings;
 import com.android.launcher3.anim.PendingAnimation;
 import com.android.launcher3.util.TraceHelper;
 import com.android.quickstep.BaseActivityInterface;
@@ -90,6 +92,10 @@ public class TaskViewSimulator implements TransformParams.BuilderProxy {
 
     private final Matrix mMatrix = new Matrix();
     private final Matrix mMatrixTmp = new Matrix();
+    private float mBaseMatrixRotation;
+
+    /** Buffer/display rotation, before adding any app-plane animation. */
+    public float getBaseMatrixRotation() { return mBaseMatrixRotation; }
 
     // Thumbnail view properties
     private final Rect mThumbnailPosition = new Rect();
@@ -106,6 +112,141 @@ public class TaskViewSimulator implements TransformParams.BuilderProxy {
 
     // Carousel properties
     public final AnimatedFloat carouselScale = new AnimatedFloat();
+    private float mStackScale = 1f;
+    private float mStackTranslationX;
+    private float mStackAlpha = 1f;
+    @Nullable private LandscapeLaunch mLandscapeLaunch;
+    public final AnimatedFloat landscapeLaunchProgress = new AnimatedFloat();
+    @Nullable private RemoteAnimationTarget mPreviewTarget;
+    @Nullable private AppWindowAnimationState.Pose mGestureSeed;
+    @Nullable private AppWindowAnimationState.GestureHandoff mGestureHandoff;
+    private boolean mGestureSeedRead;
+    private float mGestureSeedRotation;
+    private float mGestureCornerRadius = -1f;
+    private final RectF mSeedRect = new RectF();
+    private final RectF mGestureRect = new RectF();
+    private final RectF mGestureSource = new RectF();
+    private final RectF mGestureBaseRect = new RectF();
+    private DesktopAnimationSettings mGestureMotion;
+    private boolean mRelativeGesture;
+    private float mAppLaunchHandoffProgress;
+    private float mGestureProgressFloor = 1f;
+    private float mGestureStartProgress = Float.NaN;
+    private float mGestureSeedWeight = 1f;
+    @Nullable private LandscapeLaunch mInterruptedLaunch;
+    private final Matrix mInterruptedMatrix = new Matrix();
+    private final Rect mInterruptedCrop = new Rect();
+    private final float[] mInterruptedValues = new float[9];
+    private final float[] mCurrentValues = new float[9];
+    private float mInterruptedProgress, mInterruptedWeight, mInterruptedRadius;
+
+    /** Unfold the actual thumbnail transform into the app buffer's final coordinate space. */
+    public void prepareLandscapeLaunch(RemoteAnimationTarget target,
+            DesktopAnimationSettings motion) {
+        LandscapeLaunch previous = mLandscapeLaunch != null ? mLandscapeLaunch : mInterruptedLaunch;
+        float previousRadius = getCurrentCornerRadius();
+        mGestureSeed = null;
+        mGestureHandoff = null;
+        mGestureSeedRead = true;
+        mGestureCornerRadius = -1f;
+        mInterruptedLaunch = null;
+        mLandscapeLaunch = null;
+        if (mDp == null || mSplitBounds != null || mIsDesktopTask
+                || LandscapeAppAnimation.getOpeningRotation(mContext, mDp, target,
+                        target.rotationChange) == 0f) return;
+        mLandscapeLaunch = new LandscapeLaunch(target, motion);
+        landscapeLaunchProgress.updateValue(0f);
+        if (previous != null && previous.initialized) {
+            // A launch interrupted by another launch starts at the last submitted surface pose.
+            mLandscapeLaunch.capture(mMatrix, mTmpCropRect, previousRadius);
+        } else {
+            // Fixed-rotation targets carry a landscape buffer even while overview stays in
+            // portrait. Using the gesture's touch rotation here loses the quarter-turn.
+            setPreviewBounds(target.screenSpaceBounds, target.contentInsets);
+        }
+        mLayoutValid = false;
+    }
+
+    public void finishLandscapeLaunch(boolean success) {
+        if (!success && mLandscapeLaunch != null && mLandscapeLaunch.initialized) {
+            mInterruptedLaunch = mLandscapeLaunch;
+            mInterruptedMatrix.set(mMatrix);
+            mInterruptedMatrix.getValues(mInterruptedValues);
+            mInterruptedCrop.set(mTmpCropRect);
+            mInterruptedRadius = mLandscapeLaunch.cornerRadius;
+            mInterruptedProgress = fullScreenProgress.value;
+            mInterruptedWeight = 1f;
+        }
+        mLandscapeLaunch = null;
+        mLayoutValid = false;
+    }
+
+    private static final class LandscapeLaunch {
+        final Rect endCrop;
+        final Rect startCrop = new Rect();
+        final RectF mappedCrop = new RectF();
+        final float[] values = new float[9];
+        final int bufferRotation;
+        final float endX, endY;
+        final DesktopAnimationSettings motion;
+        boolean initialized;
+        float startX, startY, startScale, startAngle, startRadius, cornerRadius;
+
+        LandscapeLaunch(RemoteAnimationTarget target, DesktopAnimationSettings settings) {
+            motion = settings;
+            endCrop = new Rect(0, 0, target.screenSpaceBounds.width(),
+                    target.screenSpaceBounds.height());
+            bufferRotation = target.windowConfiguration.getRotation();
+            endX = (target.localBounds == null ? target.position.x : target.localBounds.left)
+                    + endCrop.exactCenterX();
+            endY = (target.localBounds == null ? target.position.y : target.localBounds.top)
+                    + endCrop.exactCenterY();
+        }
+
+        void capture(Matrix matrix, Rect crop, float radius) {
+            startCrop.set(crop);
+            mappedCrop.set(crop);
+            matrix.mapRect(mappedCrop);
+            startX = mappedCrop.centerX();
+            startY = mappedCrop.centerY();
+            matrix.getValues(values);
+            startScale = (float) Math.hypot(values[Matrix.MSCALE_X], values[Matrix.MSKEW_Y]);
+            startAngle = (float) Math.toDegrees(
+                    Math.atan2(values[Matrix.MSKEW_Y], values[Matrix.MSCALE_X]));
+            startRadius = radius * startScale;
+            cornerRadius = radius;
+            initialized = true;
+        }
+
+        void apply(Matrix matrix, Rect crop, float progress, float endRadius) {
+            float p = LandscapeAppAnimation.boundProgress(progress);
+            float scale = Utilities.mapRange(p, startScale, 1f);
+            // Interpolate visible size once. Easing crop and scale independently multiplies
+            // their rates and makes a recent-app launch accelerate differently from an icon.
+            float width = Utilities.mapRange(p, startCrop.width() * startScale, endCrop.width());
+            float height = Utilities.mapRange(p, startCrop.height() * startScale, endCrop.height());
+            float cropX = Utilities.mapRange(p, startCrop.exactCenterX(), endCrop.exactCenterX());
+            float cropY = Utilities.mapRange(p, startCrop.exactCenterY(), endCrop.exactCenterY());
+            float halfWidth = width / Math.max(0.001f, scale) / 2f;
+            float halfHeight = height / Math.max(0.001f, scale) / 2f;
+            crop.set(Math.round(cropX - halfWidth), Math.round(cropY - halfHeight),
+                    Math.round(cropX + halfWidth), Math.round(cropY + halfHeight));
+            matrix.setTranslate(-crop.exactCenterX(), -crop.exactCenterY());
+            matrix.postScale(scale, scale);
+            matrix.postRotate(startAngle * motion.rotationProgress(1f - p));
+            matrix.postTranslate(Utilities.mapRange(p, startX, endX),
+                    Utilities.mapRange(p, startY, endY));
+            cornerRadius = Math.min(Utilities.mapRange(p, startRadius, endRadius)
+                    / Math.max(0.001f, scale), Math.min(crop.width(), crop.height()) / 2f);
+        }
+    }
+
+    /** Match the extra TaskView transform without replacing gesture/launch transforms. */
+    public void setStackTransform(float scale, float translationX, float alpha) {
+        mStackScale = scale;
+        mStackTranslationX = translationX;
+        mStackAlpha = alpha;
+    }
 
     // RecentsView properties
     public final AnimatedFloat recentsViewScale = new AnimatedFloat();
@@ -249,6 +390,19 @@ public class TaskViewSimulator implements TransformParams.BuilderProxy {
      * @param splitInfo set to {@code null} when not in staged split mode
      */
     public void setPreview(RemoteAnimationTarget runningTarget, SplitBounds splitInfo) {
+        mLandscapeLaunch = null;
+        mPreviewTarget = runningTarget;
+        mGestureHandoff = null;
+        mGestureSeedRead = false;
+        mGestureSeed = null;
+        mGestureCornerRadius = -1f;
+        mGestureProgressFloor = 1f;
+        mGestureStartProgress = Float.NaN;
+        mGestureSeedWeight = 1f;
+        mRelativeGesture = false;
+        mAppLaunchHandoffProgress = 0f;
+        mGestureBaseRect.setEmpty();
+        mInterruptedLaunch = null;
         mSplitBounds = splitInfo;
         if (mSplitBounds == null) {
             setPreviewBounds(
@@ -266,6 +420,21 @@ public class TaskViewSimulator implements TransformParams.BuilderProxy {
             }
         }
         calculateTaskSize();
+    }
+
+    /** Set before the first surface update, after assigning this gesture's remote targets. */
+    public void setGestureHandoff(@Nullable AppWindowAnimationState.GestureHandoff handoff) {
+        mGestureHandoff = handoff;
+        mGestureSeedRead = false;
+    }
+
+    public boolean hasAppLaunchHandoff() {
+        return mRelativeGesture && mGestureSeed != null;
+    }
+
+    /** Settle a captured launch to the normal app/overview endpoint after the finger is lifted. */
+    public void setAppLaunchHandoffProgress(float progress) {
+        mAppLaunchHandoffProgress = Utilities.boundToRange(progress, 0f, 1f);
     }
 
     /**
@@ -345,6 +514,11 @@ public class TaskViewSimulator implements TransformParams.BuilderProxy {
      * Returns the current clipped/visible window bounds in the window coordinate space
      */
     public RectF getCurrentCropRect() {
+        if ((mLandscapeLaunch != null && mLandscapeLaunch.initialized)
+                || mGestureCornerRadius >= 0f || mInterruptedLaunch != null) {
+            mTempRectF.set(mTmpCropRect);
+            return mTempRectF;
+        }
         // Crop rect is the inverse of thumbnail matrix
         mTempRectF.set(0, 0, mTaskRect.width(), mTaskRect.height());
         mInversePositionMatrix.mapRect(mTempRectF);
@@ -438,15 +612,56 @@ public class TaskViewSimulator implements TransformParams.BuilderProxy {
      * surface transaction
      */
     public void apply(TransformParams params, @Nullable SurfaceTransaction surfaceTransaction) {
+        apply(params, surfaceTransaction, false);
+    }
+
+    /** The first handed-off frame must not wait for a possibly hidden Launcher draw. */
+    public void applyImmediately(TransformParams params) {
+        apply(params, null, true);
+    }
+
+    /** Build the first gesture frame without exposing a new leash before Shell's atomic start. */
+    public void applyToTransaction(TransformParams params, SurfaceControl.Transaction transaction) {
+        apply(params, null, false, transaction);
+    }
+
+    private void apply(TransformParams params, @Nullable SurfaceTransaction surfaceTransaction,
+            boolean applyImmediately) {
+        apply(params, surfaceTransaction, applyImmediately, null);
+    }
+
+    private void apply(TransformParams params, @Nullable SurfaceTransaction surfaceTransaction,
+            boolean applyImmediately, @Nullable SurfaceControl.Transaction firstFrame) {
         if (mDp == null || mThumbnailPosition.isEmpty()) {
             return;
+        }
+        if (!mGestureSeedRead) {
+            mGestureSeedRead = true;
+            if (mPreviewTarget != null && mSplitBounds == null && !mIsDesktopTask) {
+                mRelativeGesture = mGestureHandoff != null;
+                mGestureSeed = mGestureHandoff == null
+                        ? AppWindowAnimationState.peek(mPreviewTarget.taskId, mDp)
+                        : mGestureHandoff.getPose(mPreviewTarget.taskId, mDp);
+                mGestureHandoff = null;
+                if (mGestureSeed != null) {
+                    mGestureMotion = DesktopAnimationSettings.read(mContext);
+                    mGestureSeedRotation = Float.isFinite(mGestureSeed.appRotation)
+                            ? mGestureSeed.appRotation
+                            : LandscapeAppAnimation.getClosingRotation(mContext, mDp,
+                                    mPreviewTarget, mOrientationState.getRecentsActivityRotation())
+                                    * mGestureMotion.rotationProgress(1f - mGestureSeed.openness);
+                }
+            }
         }
         if (!mLayoutValid || mOrientationStateId != mOrientationState.getStateId()) {
             mLayoutValid = true;
             mOrientationStateId = mOrientationState.getStateId();
 
             getFullScreenScale();
-            if (TaskAnimationManager.SHELL_TRANSITIONS_ROTATION) {
+            if (mLandscapeLaunch != null || mInterruptedLaunch != null) {
+                mThumbnailData.rotation = (mLandscapeLaunch != null
+                        ? mLandscapeLaunch : mInterruptedLaunch).bufferRotation;
+            } else if (TaskAnimationManager.SHELL_TRANSITIONS_ROTATION) {
                 // With shell transitions, the display is rotated early so we need to actually use
                 // the rotation when the gesture starts
                 mThumbnailData.rotation = mOrientationState.getTouchRotation();
@@ -469,7 +684,7 @@ public class TaskViewSimulator implements TransformParams.BuilderProxy {
 
         float fullScreenProgress = Utilities.boundToRange(this.fullScreenProgress.value, 0, 1);
         mCurrentFullscreenParams.setProgress(fullScreenProgress, recentsViewScale.value,
-                carouselScale.value);
+                carouselScale.value * mStackScale);
 
         // Apply thumbnail matrix
         float taskWidth = mTaskRect.width();
@@ -491,6 +706,10 @@ public class TaskViewSimulator implements TransformParams.BuilderProxy {
             }
         }
 
+        // TaskView scales its contents before applying dismissal/neighbor translations. Keep
+        // the live surface in the same space so reflow is not scaled a second time.
+        mMatrix.postScale(mStackScale, mStackScale,
+                mCarouselTaskSize.centerX(), mCarouselTaskSize.centerY());
         mOrientationState.getOrientationHandler().setPrimary(mMatrix, MATRIX_POST_TRANSLATE,
                 taskPrimaryTranslation.value);
         mOrientationState.getOrientationHandler().setSecondary(mMatrix, MATRIX_POST_TRANSLATE,
@@ -500,6 +719,8 @@ public class TaskViewSimulator implements TransformParams.BuilderProxy {
         mMatrix.postScale(carouselScale.value, carouselScale.value,
                 mIsRecentsRtl ? mCarouselTaskSize.right : mCarouselTaskSize.left,
                 mCarouselTaskSize.top);
+
+        mMatrix.postTranslate(mStackTranslationX, 0f);
 
         mOrientationState.getOrientationHandler().setPrimary(
                 mMatrix, MATRIX_POST_TRANSLATE, recentsViewScroll.value);
@@ -519,9 +740,112 @@ public class TaskViewSimulator implements TransformParams.BuilderProxy {
             mTempRectF.roundOut(mTmpCropRect);
         }
 
+        mBaseMatrixRotation = LandscapeAppAnimation.getMatrixRotation(mMatrix, mCurrentValues);
+        mGestureCornerRadius = -1f;
+        if (mGestureSeed != null && (fullScreenProgress > 0f || mRelativeGesture)) {
+            mSeedRect.set(mGestureSeed.rect);
+            mMatrixTmp.reset();
+            applyWindowToHomeRotation(mMatrixTmp);
+            mMatrixTmp.mapRect(mSeedRect);
+            mGestureSource.set(mTmpCropRect);
+            mGestureRect.set(mGestureSource);
+            mMatrix.mapRect(mGestureRect);
+            final float p;
+            float seedRadius = mGestureSeed.cornerRadius;
+            if (mRelativeGesture) {
+                // Apply finger motion relative to the captured frame. Mixing that small
+                // frame towards a fullscreen rectangle while dragging made it expand again
+                // before it could close, even though ownership had already changed.
+                if (mGestureBaseRect.isEmpty()) mGestureBaseRect.set(mGestureRect);
+                float scaleX = mGestureRect.width() / mGestureBaseRect.width();
+                float scaleY = mGestureRect.height() / mGestureBaseRect.height();
+                float centerX = mSeedRect.centerX()
+                        + mGestureRect.centerX() - mGestureBaseRect.centerX();
+                float centerY = mSeedRect.centerY()
+                        + mGestureRect.centerY() - mGestureBaseRect.centerY();
+                float halfWidth = mSeedRect.width() * scaleX / 2f;
+                float halfHeight = mSeedRect.height() * scaleY / 2f;
+                mSeedRect.set(centerX - halfWidth, centerY - halfHeight,
+                        centerX + halfWidth, centerY + halfHeight);
+                seedRadius *= Math.min(scaleX, scaleY);
+                p = 1f - mAppLaunchHandoffProgress;
+            } else {
+                // A cached pose without a live handoff still converges to either endpoint.
+                if (Float.isNaN(mGestureStartProgress)) {
+                    mGestureStartProgress = fullScreenProgress;
+                }
+                mGestureProgressFloor = Math.min(mGestureProgressFloor, fullScreenProgress);
+                float weight = fullScreenProgress > mGestureProgressFloor
+                        ? mGestureProgressFloor * (1f - fullScreenProgress)
+                                / Math.max(0.001f, 1f - mGestureProgressFloor)
+                        : fullScreenProgress;
+                weight /= Math.max(0.001f, mGestureStartProgress);
+                mGestureSeedWeight = Math.min(mGestureSeedWeight, weight);
+                p = mGestureSeedWeight;
+            }
+            mGestureRect.set(Utilities.mapRange(p, mGestureRect.left, mSeedRect.left),
+                    Utilities.mapRange(p, mGestureRect.top, mSeedRect.top),
+                    Utilities.mapRange(p, mGestureRect.right, mSeedRect.right),
+                    Utilities.mapRange(p, mGestureRect.bottom, mSeedRect.bottom));
+            float radius = getCurrentCornerRadius();
+            float baseRotation = mBaseMatrixRotation;
+            LandscapeAppAnimation.applyClosingTransform(mMatrix, mGestureSource, mGestureRect,
+                    baseRotation, mGestureSeedRotation * p, 1f, mTmpCropRect, mGestureMotion,
+                    baseRotation);
+            float scale = mMatrix.mapRadius(1f);
+            mGestureCornerRadius = Math.min(Utilities.mapRange(p, radius,
+                            seedRadius / Math.max(0.001f, scale)),
+                    Math.min(mTmpCropRect.width(), mTmpCropRect.height()) / 2f);
+        }
+        if (mLandscapeLaunch != null) {
+            if (!mLandscapeLaunch.initialized) {
+                mLandscapeLaunch.capture(mMatrix, mTmpCropRect, getCurrentCornerRadius());
+            }
+            mLandscapeLaunch.apply(mMatrix, mTmpCropRect, landscapeLaunchProgress.value,
+                    com.android.systemui.shared.system.QuickStepContract.getWindowCornerRadius(
+                            mContext));
+        }
+        if (mInterruptedLaunch != null) {
+            float p = fullScreenProgress;
+            float weight = p < mInterruptedProgress
+                    ? p / Math.max(0.001f, mInterruptedProgress)
+                    : (1f - p) / Math.max(0.001f, 1f - mInterruptedProgress);
+            mInterruptedWeight = Math.min(mInterruptedWeight, weight);
+            // Both matrices are uniform scale + rotation + translation. Blending their
+            // affine components retains that form and allows the finger to take over either
+            // toward overview or back to the app, without locking the cancelled launch pose.
+            mMatrix.getValues(mCurrentValues);
+            for (int i = 0; i < 9; i++) {
+                mCurrentValues[i] = Utilities.mapRange(mInterruptedWeight,
+                        mCurrentValues[i], mInterruptedValues[i]);
+            }
+            float radius = getCurrentCornerRadius();
+            mMatrix.setValues(mCurrentValues);
+            mTmpCropRect.set(Math.round(Utilities.mapRange(mInterruptedWeight,
+                            mTmpCropRect.left, mInterruptedCrop.left)),
+                    Math.round(Utilities.mapRange(mInterruptedWeight,
+                            mTmpCropRect.top, mInterruptedCrop.top)),
+                    Math.round(Utilities.mapRange(mInterruptedWeight,
+                            mTmpCropRect.right, mInterruptedCrop.right)),
+                    Math.round(Utilities.mapRange(mInterruptedWeight,
+                            mTmpCropRect.bottom, mInterruptedCrop.bottom)));
+            mGestureCornerRadius = Utilities.mapRange(mInterruptedWeight, radius, mInterruptedRadius);
+            if (mInterruptedWeight <= 0f) {
+                mInterruptedLaunch = null;
+                mLayoutValid = false;
+            }
+        }
         params.setProgress(1f - fullScreenProgress);
-        params.applySurfaceParams(surfaceTransaction == null
-                ? params.createSurfaceParams(this) : surfaceTransaction);
+        SurfaceTransaction transaction = surfaceTransaction == null
+                ? params.createSurfaceParams(this) : surfaceTransaction;
+        if (firstFrame != null) {
+            firstFrame.merge(transaction.getTransaction());
+            transaction.getTransaction().close();
+        } else if (applyImmediately) {
+            transaction.getTransaction().apply();
+        } else {
+            params.applySurfaceParams(transaction);
+        }
 
         if (!DEBUG) {
             return;
@@ -556,7 +880,8 @@ public class TaskViewSimulator implements TransformParams.BuilderProxy {
             SurfaceProperties builder, RemoteAnimationTarget app, TransformParams params) {
         builder.setMatrix(mMatrix)
                 .setWindowCrop(mTmpCropRect)
-                .setCornerRadius(getCurrentCornerRadius());
+                .setCornerRadius(getCurrentCornerRadius())
+                .setAlpha(params.getTargetAlpha() * mStackAlpha);
 
         if (mGestureTransform != null) {
             mGestureTransform.onBuildTargetParams(builder, app, params);
@@ -594,6 +919,10 @@ public class TaskViewSimulator implements TransformParams.BuilderProxy {
      * TaskView
      */
     public float getCurrentCornerRadius() {
+        if (mGestureCornerRadius >= 0f) return mGestureCornerRadius;
+        if (mLandscapeLaunch != null && mLandscapeLaunch.initialized) {
+            return mLandscapeLaunch.cornerRadius;
+        }
         float visibleRadius = mCurrentFullscreenParams.getCurrentCornerRadius();
         mTempPoint[0] = visibleRadius;
         mTempPoint[1] = 0;

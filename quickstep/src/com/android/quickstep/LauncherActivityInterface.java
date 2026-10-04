@@ -1,4 +1,5 @@
 /*
+ * Modified by the ArkUI Project in 2026 for the swipe-up home backdrop.
  * Copyright (C) 2019 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,6 +17,9 @@
 package com.android.quickstep;
 
 import static com.android.app.animation.Interpolators.LINEAR;
+import static com.android.launcher3.LauncherAnimUtils.HOTSEAT_SCALE_PROPERTY_FACTORY;
+import static com.android.launcher3.LauncherAnimUtils.SCALE_INDEX_WORKSPACE_STATE;
+import static com.android.launcher3.LauncherAnimUtils.WORKSPACE_SCALE_PROPERTY_FACTORY;
 import static com.android.launcher3.LauncherState.ALL_APPS;
 import static com.android.launcher3.LauncherState.BACKGROUND_APP;
 import static com.android.launcher3.LauncherState.NORMAL;
@@ -28,16 +32,19 @@ import android.animation.AnimatorSet;
 import android.content.Context;
 import android.graphics.Rect;
 import android.view.RemoteAnimationTarget;
+import android.view.View;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.annotation.UiThread;
 
+import com.android.launcher3.CellLayout;
 import com.android.launcher3.DeviceProfile;
 import com.android.launcher3.Launcher;
 import com.android.launcher3.LauncherAnimUtils;
 import com.android.launcher3.LauncherInitListener;
 import com.android.launcher3.LauncherState;
+import com.android.launcher3.anim.DesktopAnimationSettings;
 import com.android.launcher3.anim.PendingAnimation;
 import com.android.launcher3.statehandlers.DepthController;
 import com.android.launcher3.statemanager.StateManager;
@@ -141,6 +148,33 @@ public final class LauncherActivityInterface extends
                                 MULTI_PROPERTY_VALUE, fromDepthRatio, toDepthRatio),
                         fromDepthRatio, toDepthRatio,
                         portraitPhone ? progress -> Math.min(1f, progress / .6f) : LINEAR);
+                if (portraitPhone) {
+                    final var workspace = activity.getWorkspace();
+                    final var hotseat = activity.getHotseat();
+                    final var pageAlpha = NORMAL.getWorkspacePageAlphaProvider(activity);
+                    final float scale = DesktopAnimationSettings.read(activity).workspaceScale;
+                    workspace.setPivotToScaleWithSelf(hotseat);
+                    // BACKGROUND_APP normally hides every home icon. A vertical swipe should
+                    // reveal the blurred home immediately; pausing reveals sibling task cards
+                    // independently, through the recents attach animation.
+                    pa.addOnFrameCallback(() -> {
+                        if (!activity.isInState(BACKGROUND_APP)) return;
+                        WORKSPACE_SCALE_PROPERTY_FACTORY.get(SCALE_INDEX_WORKSPACE_STATE)
+                                .setValue(workspace, scale);
+                        HOTSEAT_SCALE_PROPERTY_FACTORY.get(SCALE_INDEX_WORKSPACE_STATE)
+                                .setValue(hotseat, scale);
+                        workspace.setTranslationX(0f);
+                        workspace.setTranslationY(0f);
+                        hotseat.setTranslationY(0f);
+                        workspace.setAlpha(1f);
+                        hotseat.setAlpha(1f);
+                        hotseat.setVisibility(View.VISIBLE);
+                        for (int i = 0; i < workspace.getChildCount(); i++) {
+                            ((CellLayout) workspace.getPageAt(i)).getShortcutsAndWidgets()
+                                    .setAlpha(pageAlpha.getPageAlpha(i));
+                        }
+                    });
+                }
             }
         };
 

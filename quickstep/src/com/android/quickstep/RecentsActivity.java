@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2019 The Android Open Source Project
+ * Modified by the ArkUI Project in 2026 for configurable, interruptible app launches.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,7 +23,6 @@ import static android.view.RemoteAnimationTarget.MODE_OPENING;
 
 import static com.android.launcher3.LauncherConstants.SavedInstanceKeys.RUNTIME_STATE;
 import static com.android.launcher3.LauncherConstants.SavedInstanceKeys.RUNTIME_STATE_RECREATE_TO_UPDATE_THEME;
-import static com.android.launcher3.QuickstepTransitionManager.RECENTS_LAUNCH_DURATION;
 import static com.android.launcher3.QuickstepTransitionManager.STATUS_BAR_TRANSITION_DURATION;
 import static com.android.launcher3.QuickstepTransitionManager.STATUS_BAR_TRANSITION_PRE_DELAY;
 import static com.android.launcher3.testing.shared.TestProtocol.LAUNCHER_ACTIVITY_STOPPED_MESSAGE;
@@ -62,6 +62,8 @@ import com.android.launcher3.LauncherAnimationRunner.RemoteAnimationFactory;
 import com.android.launcher3.LauncherRootView;
 import com.android.launcher3.R;
 import com.android.launcher3.anim.AnimatorPlaybackController;
+import com.android.launcher3.anim.AnimationSuccessListener;
+import com.android.launcher3.anim.DesktopAnimationSettings;
 import com.android.launcher3.anim.PendingAnimation;
 import com.android.launcher3.compat.AccessibilityManagerCompat;
 import com.android.launcher3.desktop.DesktopRecentsTransitionController;
@@ -306,10 +308,11 @@ public final class RecentsActivity extends StatefulActivity<RecentsState> implem
 
         final LauncherAnimationRunner wrapper = new LauncherAnimationRunner(
                 mUiHandler, mActivityLaunchAnimationRunner, true /* startAtFrontOfQueue */);
+        final long duration = TaskViewUtils.getRecentsLaunchDuration(this, taskView);
         final ActivityOptions options = ActivityOptions.makeRemoteAnimation(
-                new RemoteAnimationAdapter(wrapper, RECENTS_LAUNCH_DURATION,
-                        RECENTS_LAUNCH_DURATION - STATUS_BAR_TRANSITION_DURATION
-                                - STATUS_BAR_TRANSITION_PRE_DELAY),
+                new RemoteAnimationAdapter(wrapper, duration,
+                        Math.max(0, duration - STATUS_BAR_TRANSITION_DURATION
+                                - STATUS_BAR_TRANSITION_PRE_DELAY)),
                 new RemoteTransition(wrapper.toRemoteTransition(), getIApplicationThread(),
                         "LaunchFromRecents"));
         final ActivityOptionsWrapper activityOptions = new ActivityOptionsWrapper(options,
@@ -335,7 +338,8 @@ public final class RecentsActivity extends StatefulActivity<RecentsState> implem
             RemoteAnimationTarget[] nonAppTargets) {
         AnimatorSet target = new AnimatorSet();
         boolean activityClosing = taskIsATargetWithMode(appTargets, getTaskId(), MODE_CLOSING);
-        PendingAnimation pa = new PendingAnimation(RECENTS_LAUNCH_DURATION);
+        final long duration = TaskViewUtils.getRecentsLaunchDuration(this, taskView);
+        PendingAnimation pa = new PendingAnimation(duration);
         createRecentsWindowAnimator(recentsView, taskView, !activityClosing, appTargets,
                 wallpaperTargets, nonAppTargets, /* depthController= */ null,
                 /* transitionInfo= */ null, /* appearedTaskId= */ INVALID_TASK_ID, pa);
@@ -345,8 +349,9 @@ public final class RecentsActivity extends StatefulActivity<RecentsState> implem
         if (activityClosing) {
             Animator adjacentAnimation = mFallbackRecentsView
                     .createAdjacentPageAnimForTaskLaunch(taskView);
-            adjacentAnimation.setInterpolator(Interpolators.TOUCH_RESPONSE);
-            adjacentAnimation.setDuration(RECENTS_LAUNCH_DURATION);
+            adjacentAnimation.setInterpolator(taskView.containsMultipleTasks()
+                    ? Interpolators.TOUCH_RESPONSE : DesktopAnimationSettings.read(this).interpolator);
+            adjacentAnimation.setDuration(duration);
             adjacentAnimation.addListener(resetStateListener());
             target.play(adjacentAnimation);
         }
@@ -551,9 +556,9 @@ public final class RecentsActivity extends StatefulActivity<RecentsState> implem
     }
 
     private AnimatorListenerAdapter resetStateListener() {
-        return new AnimatorListenerAdapter() {
+        return new AnimationSuccessListener() {
             @Override
-            public void onAnimationEnd(Animator animation) {
+            public void onAnimationSuccess(Animator animation) {
                 mFallbackRecentsView.resetTaskVisuals();
                 mStateManager.reapplyState();
             }

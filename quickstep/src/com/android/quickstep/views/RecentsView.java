@@ -1,5 +1,5 @@
 /*
- * Modified by the ArkUI Project in 2026 for swipe-to-split handoff.
+ * Modified by the ArkUI Project in 2026 for swipe-to-split handoff and stacked recent apps.
  * Copyright (C) 2017 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -152,6 +152,8 @@ import com.android.launcher3.AbstractFloatingView;
 import com.android.launcher3.BuildConfig;
 import com.android.launcher3.DeviceProfile;
 import com.android.launcher3.Insettable;
+import com.android.launcher3.LauncherPrefChangeListener;
+import com.android.launcher3.LauncherPrefs;
 import com.android.launcher3.MotionEventsUtils;
 import com.android.launcher3.PagedView;
 import com.android.launcher3.R;
@@ -160,6 +162,7 @@ import com.android.launcher3.anim.AnimatedFloat;
 import com.android.launcher3.anim.AnimatorListeners;
 import com.android.launcher3.anim.AnimatorPlaybackController;
 import com.android.launcher3.anim.PendingAnimation;
+import com.android.launcher3.anim.DesktopAnimationSettings;
 import com.android.launcher3.anim.SpringProperty;
 import com.android.launcher3.compat.AccessibilityManagerCompat;
 import com.android.launcher3.config.FeatureFlags;
@@ -608,6 +611,21 @@ public abstract class RecentsView<
     private boolean mOverviewGridEnabled;
     private boolean mOverviewFullscreenEnabled;
     private boolean mOverviewSelectEnabled;
+    private boolean mStackedRecentsEnabled;
+    private boolean mStackedRecentsActive;
+    private DesktopAnimationSettings mStackMotion;
+    private final LauncherPrefChangeListener mStackedRecentsListener = key -> {
+        final boolean modeChanged = LauncherPrefs.STACKED_RECENTS.getSharedPrefKey().equals(key);
+        if (modeChanged || (key != null && key.startsWith(
+                DesktopAnimationSettings.PREFIX + "stack_"))) {
+            mStackMotion = DesktopAnimationSettings.read(getContext());
+            mStackedRecentsEnabled = LauncherPrefs.get(getContext()).get(
+                    LauncherPrefs.STACKED_RECENTS);
+            updateCurveProperties();
+            if (modeChanged) loadVisibleTaskData(TaskView.FLAG_UPDATE_ALL);
+            invalidate();
+        }
+    };
 
     private boolean mShouldClampScrollOffset;
     private int mClampedScrollOffsetBound;
@@ -762,6 +780,8 @@ public abstract class RecentsView<
 
     @ViewDebug.ExportedProperty(category = "launcher")
     protected float mContentAlpha = 1;
+    private float mSmallWindowPreviewAlpha = 1f;
+    private boolean mSmallWindowPreviewActive;
     @ViewDebug.ExportedProperty(category = "launcher")
     protected float mFullscreenProgress = 0;
     /**
@@ -1130,6 +1150,13 @@ public abstract class RecentsView<
         }
     }
 
+    @Override
+    protected int getChildDrawingOrder(int childCount, int drawingPosition) {
+        // Newer cards slide in front of older cards. ViewGroup also uses this order for touches.
+        return mStackedRecentsActive ? childCount - drawingPosition - 1
+                : super.getChildDrawingOrder(childCount, drawingPosition);
+    }
+
     private float getUndampedOverScrollShift() {
         final int width = getWidth();
         final int height = getHeight();
@@ -1272,6 +1299,11 @@ public abstract class RecentsView<
     @Override
     protected void onAttachedToWindow() {
         super.onAttachedToWindow();
+        mStackMotion = DesktopAnimationSettings.read(getContext());
+        mStackedRecentsEnabled = LauncherPrefs.get(getContext()).get(LauncherPrefs.STACKED_RECENTS);
+        LauncherPrefs.get(getContext()).addListener(mStackedRecentsListener,
+                LauncherPrefs.STACKED_RECENTS);
+        setChildrenDrawingOrderEnabled(true);
         updateTaskStackListenerState();
         mModel.getThumbnailCache().getHighResLoadingState().addCallback(this);
         TaskStackChangeListeners.getInstance().registerTaskStackListener(mTaskStackListener);
@@ -1293,6 +1325,12 @@ public abstract class RecentsView<
     @Override
     protected void onDetachedFromWindow() {
         super.onDetachedFromWindow();
+        LauncherPrefs.get(getContext()).removeListener(mStackedRecentsListener,
+                LauncherPrefs.STACKED_RECENTS);
+        if (getDepthController() != null) {
+            getDepthController().setStackedOverviewBlur(0f);
+            getDepthController().endAppTransition(this);
+        }
 
         updateTaskStackListenerState();
         mModel.getThumbnailCache().getHighResLoadingState().removeCallback(this);
@@ -1371,11 +1409,11 @@ public abstract class RecentsView<
             mTaskViewCount++;
         }
         if (mAddDesktopButton != null && child instanceof AddDesktopButton) {
-            mAddDesktopButton.setContentAlpha(mContentAlpha);
+            mAddDesktopButton.setContentAlpha(getVisibleContentAlpha());
         } else if (child instanceof ClearAllButton) {
-            mClearAllButton.setContentAlpha(mContentAlpha);
+            mClearAllButton.setContentAlpha(getVisibleContentAlpha());
         } else {
-            child.setAlpha(mContentAlpha);
+            child.setAlpha(getVisibleContentAlpha());
         }
         // RecentsView is set to RTL in the constructor when system is using LTR. Here we set the
         // child direction back to match system settings.
@@ -1546,7 +1584,10 @@ public abstract class RecentsView<
             return isTaskViewWithinBounds(tv, screenStart, screenEnd, /*taskViewTranslation=*/ 0);
         } else {
             // For now, just check if it's the active task or an adjacent task
-            return Math.abs(indexOfChild(tv) - getNextPage()) <= 1;
+            final int distance = indexOfChild(tv) - getNextPage();
+            return mStackedRecentsActive ? tv.getStackAlpha() > 0f
+                    && distance >= -1 && distance <= 3
+                    : Math.abs(distance) <= 1;
         }
     }
 
@@ -1693,6 +1734,7 @@ public abstract class RecentsView<
 
     public void setOverviewStateEnabled(boolean enabled) {
         mOverviewStateEnabled = enabled;
+        updateStackedTaskTransforms();
         updateTaskStackListenerState();
         mOrientationState.setRotationWatcherEnabled(enabled);
         if (!enabled) {
@@ -2279,7 +2321,7 @@ public abstract class RecentsView<
     protected void resetTaskVisuals(TaskView taskView) {
         taskView.resetViewTransforms();
         taskView.setIconVisibleForGesture(mTaskIconVisible);
-        taskView.setStableAlpha(mContentAlpha);
+        taskView.setStableAlpha(getVisibleContentAlpha());
         taskView.setFullscreenProgress(mFullscreenProgress);
         taskView.setModalness(mTaskModalness);
         taskView.setTaskThumbnailSplashAlpha(mTaskThumbnailSplashAlpha);
@@ -2321,6 +2363,7 @@ public abstract class RecentsView<
             taskView.setFullscreenProgress(mFullscreenProgress);
         }
         mClearAllButton.setFullscreenProgress(fullscreenProgress);
+        updateStackedTaskTransforms();
 
         // Fade out the actions view quickly (0.1 range)
         mActionsView.getFullscreenAlpha().updateValue(
@@ -2632,6 +2675,98 @@ public abstract class RecentsView<
 
         // Clear all button alpha was set by the previous line.
         mActionsView.getIndexScrollAlpha().updateValue(1 - mClearAllButton.getScrollAlpha());
+        updateStackedTaskTransforms();
+    }
+
+    private void updateStackedTaskTransforms() {
+        if (mContainer == null || mClearAllButton == null) {
+            return;
+        }
+        DeviceProfile dp = mContainer.getDeviceProfile();
+        mStackedRecentsActive = mStackedRecentsEnabled
+                && !dp.getDeviceProperties().isTablet()
+                && !dp.getDeviceProperties().isLandscape()
+                && getPagedOrientationHandler() == RecentsPagedOrientationHandler.PORTRAIT
+                && !showAsGrid() && !isSplitSelectionActive();
+        final float amount = getStackedTaskTransformAmount();
+        final int scroll = getPagedOrientationHandler().getPrimaryScroll(this);
+        getTaskViews().forEachWithIndexInParent((index, task) ->
+                updateStackedTaskTransform(task, index, scroll, amount));
+        updateStackedLiveTileTransforms();
+        updateOverviewBlur();
+    }
+
+    private void updateOverviewBlur() {
+        if (getDepthController() != null) {
+            getDepthController().setStackedOverviewBlur(mOverviewStateEnabled
+                    ? getStackedTaskTransformAmount() * getVisibleContentAlpha() : 0f);
+        }
+    }
+
+    private float getStackedTaskTransformAmount() {
+        return mStackedRecentsActive
+                ? (1f - Utilities.boundToRange(mFullscreenProgress, 0f, 1f))
+                        * (1f - mGridProgress) * (1f - mTaskModalness) : 0f;
+    }
+
+    private void updateStackedTaskTransform(TaskView task, int index, int scroll, float amount) {
+        if (amount == 0f || task.getWidth() == 0 || !isPageScrollsInitialized()) {
+            task.setStackTransform(1f, 0f, 1f);
+            return;
+        }
+        final float direction = mIsRtl ? -1f : 1f;
+        final float stride = Math.max(1f, task.getWidth() + getPageSpacing());
+        // Reflow is expressed in carousel pages. Compress its translation together with the
+        // page offset; adding a full-page dismissal offset after stacking moves every card away.
+        final float offset = getScrollForPage(index) - scroll
+                + task.getPrimaryDismissTranslationProperty().get(task);
+        final float position = direction * offset / stride;
+        final float behind = Math.max(0f, position);
+        // The next card exposes about 18% of its width, with tighter spacing behind it.
+        final float stackedOffset = position < 0f ? offset
+                : direction * task.getWidth() * mStackMotion.stackSpacing
+                        * (1f - (float) Math.exp(-behind));
+        final float scale = 1f - mStackMotion.stackScaleStep * Math.min(3f, behind) * amount;
+        final float alpha = 1f - Utilities.boundToRange(behind - 2f, 0f, 1f) * amount;
+        task.setStackTransform(scale, (stackedOffset - offset) * amount, alpha);
+    }
+
+    /** Keep both spring and gesture-driven dismissals in the stack's coordinate space. */
+    void onTaskDismissTranslationChanged(TaskView task) {
+        if (!mStackedRecentsActive) return;
+        int index = indexOfChild(task);
+        if (index < 0) return;
+        updateStackedTaskTransform(task, index,
+                getPagedOrientationHandler().getPrimaryScroll(this), getStackedTaskTransformAmount());
+        if (task.isRunningTask() && mEnableDrawingLiveTile) {
+            updateStackedLiveTileTransforms();
+        }
+    }
+
+    /** Include cards that become visible as the stack closes a dismissed task's gap. */
+    boolean isTaskVisibleDuringStackDismiss(TaskView task, float translation) {
+        if (!mStackedRecentsActive || !isPageScrollsInitialized()) return false;
+        int index = indexOfChild(task);
+        if (index < 0) return false;
+        float direction = mIsRtl ? -1f : 1f;
+        float stride = Math.max(1f, task.getWidth() + getPageSpacing());
+        float offset = getScrollForPage(index)
+                - getPagedOrientationHandler().getPrimaryScroll(this);
+        float start = direction * offset / stride;
+        float end = direction * (offset + translation) / stride;
+        return Math.min(start, end) < 3f && Math.max(start, end) > -1f;
+    }
+
+    private void updateStackedLiveTileTransforms() {
+        runActionOnRemoteHandles(handle -> {
+            RemoteAnimationTargets targets = handle.getTransformParams().getTargetSet();
+            TaskView task = targets == null ? null
+                    : getTaskViewByTaskId(targets.getFirstAppTargetTaskId());
+            handle.getTaskViewSimulator().setStackTransform(
+                    task == null ? 1f : task.getStackScale(),
+                    task == null ? 0f : task.getStackTranslationX(),
+                    task == null ? 1f : task.getStackAlpha());
+        });
     }
 
     @Override
@@ -2693,7 +2828,8 @@ public abstract class RecentsView<
             int centerPageIndex = getPageNearestToCenterOfScreen();
             int numChildren = getChildCount();
             lowerIndex = Math.max(0, centerPageIndex - 2);
-            upperIndex = Math.min(centerPageIndex + 2, numChildren - 1);
+            upperIndex = Math.min(centerPageIndex + (mStackedRecentsActive ? 4 : 2),
+                    numChildren - 1);
             visibleStart = visibleEnd = 0;
         }
 
@@ -2829,6 +2965,8 @@ public abstract class RecentsView<
             ? extends StatefulContainer<STATE_TYPE>> getStateManager();
 
     public void reset() {
+        setSmallWindowPreviewAlpha(false, 1f);
+        if (getDepthController() != null) getDepthController().endAppTransition(this);
         clearSplitSwipePreview();
         Log.d(TAG, "reset - mEnableDrawingLiveTile: " + mEnableDrawingLiveTile
                 + ", mRecentsAnimationController: " + mRecentsAnimationController);
@@ -3006,6 +3144,12 @@ public abstract class RecentsView<
     public void onGestureAnimationStart(GroupedTaskInfo groupedTaskInfo) {
         Log.d(TAG, "onGestureAnimationStart - groupedTaskInfo: " + groupedTaskInfo);
         setActiveGestureGroupedTaskInfo(groupedTaskInfo);
+        if (getDepthController() != null && !mContainer.getDeviceProfile()
+                .getDeviceProperties().isTablet()) {
+            // Establish the backdrop before the first exposed frame. The window's release
+            // animator takes this channel over at the current blur without resetting it.
+            getDepthController().beginAppTransition(this, false);
+        }
 
         // This needs to be called before the other states are set since it can create the task view
         if (mOrientationState.setGestureActive(true)) {
@@ -3095,6 +3239,8 @@ public abstract class RecentsView<
      * Called when a gesture from an app has finished, and the animation to the target has ended.
      */
     public void onGestureAnimationEnd() {
+        setSmallWindowPreviewAlpha(false, 1f);
+        if (getDepthController() != null) getDepthController().endAppTransition(this);
         setActiveGestureGroupedTaskInfo(null);
         if (mOrientationState.setGestureActive(false)) {
             updateOrientationHandler(/* forceRecreateDragLayerControllers = */ false);
@@ -3648,6 +3794,7 @@ public abstract class RecentsView<
             taskView.setGridProgress(gridProgress);
         }
         mClearAllButton.setGridProgress(gridProgress);
+        updateStackedTaskTransforms();
     }
 
     private void setTaskThumbnailSplashAlpha(float taskThumbnailSplashAlpha) {
@@ -4423,17 +4570,18 @@ public abstract class RecentsView<
                         animationEndProgress
                 )
         );
-        if (mEnableDrawingLiveTile && view instanceof TaskView
-                && ((TaskView) view).isRunningTask()) {
+        if (mEnableDrawingLiveTile && view instanceof TaskView taskView
+                && taskView.isRunningTask()) {
             pendingAnimation.addOnFrameCallback(() -> {
+                float translation = getPagedOrientationHandler().getPrimaryValue(
+                        view.getTranslationX(), view.getTranslationY());
+                // The simulator applies the stack offset separately, just like TaskView.
+                final float primaryTranslation = translation
+                        - (mStackedRecentsActive ? taskView.getStackTranslationX() : 0f);
                 runActionOnRemoteHandles(
                         remoteTargetHandle ->
                                 remoteTargetHandle.getTaskViewSimulator()
-                                        .taskPrimaryTranslation.value =
-                                        getPagedOrientationHandler().getPrimaryValue(
-                                                view.getTranslationX(),
-                                                view.getTranslationY()
-                                        ));
+                                        .taskPrimaryTranslation.value = primaryTranslation);
                 redrawLiveTile();
             });
         }
@@ -4520,6 +4668,8 @@ public abstract class RecentsView<
     }
 
     protected void onDismissAnimationEnds() {
+        // Removal can change both page indices and the selected page without another scroll frame.
+        updateStackedTaskTransforms();
         AccessibilityManagerCompat.sendTestProtocolEventToTest(getContext(),
                 DISMISS_ANIMATION_ENDS_MESSAGE);
     }
@@ -4764,29 +4914,49 @@ public abstract class RecentsView<
         return mContentAlpha;
     }
 
+    private float getVisibleContentAlpha() {
+        return mContentAlpha * mSmallWindowPreviewAlpha;
+    }
+
+    /** Independent mask: the attach animation remains the owner of overview visibility. */
+    public void setSmallWindowPreviewAlpha(boolean active, float alpha) {
+        alpha = active ? Utilities.boundToRange(alpha, 0f, 1f) : 1f;
+        if (mSmallWindowPreviewActive == active && mSmallWindowPreviewAlpha == alpha) return;
+        mSmallWindowPreviewActive = active;
+        mSmallWindowPreviewAlpha = alpha;
+        applyContentAlpha();
+    }
+
     public void setContentAlpha(float alpha) {
         if (alpha == mContentAlpha) {
             return;
         }
 
+        mContentAlpha = Utilities.boundToRange(alpha, 0, 1);
+        applyContentAlpha();
+    }
+
+    private void applyContentAlpha() {
         traceBegin(Trace.TRACE_TAG_APP, "RecentsView.setContentAlpha");
-        alpha = Utilities.boundToRange(alpha, 0, 1);
-        mContentAlpha = alpha;
+        float alpha = getVisibleContentAlpha();
 
         for (TaskView taskView : getTaskViews()) {
             taskView.setStableAlpha(alpha);
         }
-        mClearAllButton.setContentAlpha(mContentAlpha);
+        mClearAllButton.setContentAlpha(alpha);
 
         if (mAddDesktopButton != null) {
-            mAddDesktopButton.setContentAlpha(mContentAlpha);
+            mAddDesktopButton.setContentAlpha(alpha);
         }
         int alphaInt = Math.round(alpha * 255);
         mEmptyMessagePaint.setAlpha(alphaInt);
         mEmptyIcon.setAlpha(alphaInt);
-        mActionsView.getContentAlpha().updateValue(mContentAlpha);
+        mActionsView.getContentAlpha().updateValue(alpha);
+        updateOverviewBlur();
 
-        if (alpha > 0) {
+        // Keep the surface applier attached while the preview owns the live app. Individual
+        // task cards can be fully invisible without disabling its render callback.
+        if (alpha > 0 || mSmallWindowPreviewActive) {
             setVisibility(VISIBLE);
         } else if (!mFreezeViewVisibility) {
             setVisibility(INVISIBLE);
@@ -4802,7 +4972,8 @@ public abstract class RecentsView<
         if (mFreezeViewVisibility != freezeViewVisibility) {
             mFreezeViewVisibility = freezeViewVisibility;
             if (!mFreezeViewVisibility) {
-                setVisibility(mContentAlpha > 0 ? VISIBLE : INVISIBLE);
+                setVisibility(getVisibleContentAlpha() > 0 || mSmallWindowPreviewActive
+                        ? VISIBLE : INVISIBLE);
             }
         }
     }
@@ -5975,9 +6146,22 @@ public abstract class RecentsView<
         mPendingAnimation = new PendingAnimation(duration);
         mPendingAnimation.add(anim);
         if (taskView.isRunningTask()) {
-            runActionOnRemoteHandles(
-                    remoteTargetHandle -> remoteTargetHandle.getTaskViewSimulator()
-                            .addOverviewToAppAnim(mPendingAnimation, interpolator));
+            final DesktopAnimationSettings motion = DesktopAnimationSettings.read(getContext());
+            runActionOnRemoteHandles(handle -> {
+                TaskViewSimulator simulator = handle.getTaskViewSimulator();
+                RemoteAnimationTargets targets = handle.getTransformParams().getTargetSet();
+                if (!taskView.containsMultipleTasks() && !(taskView instanceof DesktopTaskView)
+                        && targets != null && targets.getFirstAppTarget() != null) {
+                    simulator.prepareLandscapeLaunch(targets.getFirstAppTarget(), motion);
+                    simulator.setStackTransform(taskView.getStackScale(),
+                            taskView.getStackTranslationX(), taskView.getStackAlpha());
+                    simulator.apply(handle.getTransformParams());
+                    mPendingAnimation.addFloat(simulator.landscapeLaunchProgress,
+                            AnimatedFloat.VALUE, 0f, 1f, interpolator);
+                    mPendingAnimation.addEndListener(simulator::finishLandscapeLaunch);
+                }
+                simulator.addOverviewToAppAnim(mPendingAnimation, interpolator);
+            });
             mPendingAnimation.addOnFrameCallback(this::redrawLiveTile);
         }
         mPendingAnimation.addListener(new AnimatorListenerAdapter() {
@@ -6762,6 +6946,7 @@ public abstract class RecentsView<
                 HIDDEN_NON_ZERO_ROTATION, modalness < 1
                         && mOrientationState.shouldHideActionButtons()
         );
+        updateStackedTaskTransforms();
     }
 
     @Nullable
@@ -6942,6 +7127,7 @@ public abstract class RecentsView<
     @Override
     protected void onScrollChanged(int l, int t, int oldl, int oldt) {
         super.onScrollChanged(l, t, oldl, oldt);
+        updateStackedTaskTransforms();
         dispatchScrollChanged();
     }
 
