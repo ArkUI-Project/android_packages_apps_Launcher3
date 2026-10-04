@@ -78,6 +78,9 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
     private float mPointerX;
     private float mPointerY;
     private float mFollowProgress;
+    private float mFollowOriginX = Float.NaN;
+    private float mFollowOriginCenterX;
+    private float mUpwardOverscroll;
     private float mMaterialX;
     private float mMaterialY;
     private float mRequestedMaterialX;
@@ -222,14 +225,17 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
         if (mReleasing || mClosed) return;
         mPointerX = Utilities.boundToRange(x, 0f, mWidth);
         mPointerY = Utilities.boundToRange(y, 0f, mHeight);
-        // Following begins before target selection. Crossing between the two entries must not
-        // return the app to the overview card or change its size underneath the finger.
-        float followEnd = Math.max(.30f, mMotion.swipeTargetStart);
-        mFollowProgress = smoothstep((distance / mHeight - .20f) / (followEnd - .20f));
         // The reference introduces the targets as the overview card approaches half-screen width.
         mVisibility = clamp((distance / mHeight - mMotion.swipeTargetStart)
                 / mMotion.swipeTargetRange);
         mVisibility = mVisibility * mVisibility * (3f - 2f * mVisibility);
+        // Stay aligned with the overview cards until the drag targets start appearing. The
+        // target selection threshold must not decide whether the held app follows the finger.
+        mFollowProgress = mVisibility;
+        float minimumWindowDistance = mHeight
+                * (1f - AnimatorControllerWithResistance.PHONE_MIN_WINDOW_SCALE)
+                / AnimatorControllerWithResistance.PHONE_WINDOW_SHRINK_RATE;
+        mUpwardOverscroll = Math.max(0f, distance - minimumWindowDistance);
         float vertical = clamp((.66f - mPointerY / mHeight) / .26f);
         float horizontal = clamp((Math.abs(mPointerX / mWidth - .5f) - .04f) / .22f);
         // A straight swipe to the top must work without a pause or a sideways detour.
@@ -320,15 +326,29 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
         mNormalRadius = simulator.getCurrentCornerRadius();
         if (mNormal.isEmpty()) return;
 
-        // Keep the overview's continuous vertical shrink and move the app independently of
-        // either drop target. Only the surrounding material has a delayed spring response.
-        float width = mNormal.width();
-        float height = mNormal.height();
-        float left = Utilities.boundToRange(mPointerX - width / 2f, 6 * mDensity,
-                Math.max(6 * mDensity, mWidth - width - 6 * mDensity));
-        float top = Utilities.boundToRange(mPointerY - height * .78f, mHeight * .025f,
-                Math.max(mHeight * .025f, mHeight - height - 24 * mDensity));
-        mHover.set(left, top, left + width, top + height);
+        mHover.set(mNormal);
+        if (mFollowProgress == 0f) {
+            // Pulling back into overview restores its geometry and resets the next drag origin.
+            mFollowOriginX = Float.NaN;
+        } else {
+            if (Float.isNaN(mFollowOriginX)) {
+                mFollowOriginX = mPointerX;
+                mFollowOriginCenterX = mNormal.centerX();
+            }
+            // Follow displacement from the displayed card, not the absolute touch position.
+            // An off-center vertical swipe must not drag the app away from the overview stack.
+            float width = mNormal.width();
+            float height = mNormal.height();
+            float centerX = mFollowOriginCenterX + mPointerX - mFollowOriginX;
+            float left = Utilities.boundToRange(centerX - width / 2f, 6 * mDensity,
+                    Math.max(6 * mDensity, mWidth - width - 6 * mDensity));
+            // Overview already owns vertical shrinking and translation. Continue upward only
+            // after its minimum size, rather than anchoring the card below its normal position.
+            float top = Utilities.boundToRange(mNormal.top - mUpwardOverscroll,
+                    mHeight * .025f,
+                    Math.max(mHeight * .025f, mHeight - height - 24 * mDensity));
+            mHover.set(left, top, left + width, top + height);
+        }
         interpolate(mNormal, mHover, mFollowProgress, mCurrent);
         updateMaterialPosition();
         long now = SystemClock.uptimeMillis();
