@@ -69,7 +69,7 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
     private final RectF mVelocitySample = new RectF();
     private final PointF mSizeVelocity = new PointF();
     private long mVelocitySampleTime;
-    private final RectF mHover = new RectF();
+    private final RectF mFollowOrigin = new RectF();
     private final RectF mReleaseStart = new RectF();
     private final RectF mReleaseEnd = new RectF();
     private final Targets mTargets;
@@ -78,9 +78,10 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
     private float mPointerX;
     private float mPointerY;
     private float mFollowProgress;
-    private float mFollowOriginX = Float.NaN;
-    private float mFollowOriginCenterX;
-    private float mUpwardOverscroll;
+    private float mFollowOriginX;
+    private float mFollowOriginY;
+    private float mFollowOriginScale;
+    private float mDragScale = 1f;
     private float mMaterialX;
     private float mMaterialY;
     private float mRequestedMaterialX;
@@ -216,26 +217,25 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
                     - mReleaseRecentsAlpha) * progress;
         }
         // Hide siblings with the targets' reveal, before the app reaches either circle.
-        // Waiting for the small-window material to finish growing exposed the whole stack.
-        return 1f - Math.max(mVisibility, Math.max(mSplitReveal, mWindowReveal));
+        // Keep them hidden while dragging back; release restores overview from the held frame.
+        return 1f - Math.max(mFollowProgress, Math.max(mSplitReveal, mWindowReveal));
     }
 
     /** The app follows the finger directly; only the target material has a settling response. */
     public void updateGesture(float x, float y, float distance) {
         if (mReleasing || mClosed) return;
-        mPointerX = Utilities.boundToRange(x, 0f, mWidth);
-        mPointerY = Utilities.boundToRange(y, 0f, mHeight);
+        mPointerX = x;
+        mPointerY = y;
         // The reference introduces the targets as the overview card approaches half-screen width.
         mVisibility = clamp((distance / mHeight - mMotion.swipeTargetStart)
                 / mMotion.swipeTargetRange);
         mVisibility = mVisibility * mVisibility * (3f - 2f * mVisibility);
-        // Stay aligned with the overview cards until the drag targets start appearing. The
-        // target selection threshold must not decide whether the held app follows the finger.
-        mFollowProgress = mVisibility;
-        float minimumWindowDistance = mHeight
-                * (1f - AnimatorControllerWithResistance.PHONE_MIN_WINDOW_SCALE)
-                / AnimatorControllerWithResistance.PHONE_WINDOW_SHRINK_RATE;
-        mUpwardOverscroll = Math.max(0f, distance - minimumWindowDistance);
+        // Once picked up, keep the same drag origin until release. Fading or changing targets
+        // must not blend the app back to overview, or reset its origin under a moving finger.
+        mFollowProgress = Math.max(mFollowProgress, mVisibility);
+        mDragScale = Math.max(AnimatorControllerWithResistance.PHONE_MIN_WINDOW_SCALE,
+                1f - Math.max(0f, distance) / mHeight
+                        * AnimatorControllerWithResistance.PHONE_WINDOW_SHRINK_RATE);
         float vertical = clamp((.66f - mPointerY / mHeight) / .26f);
         float horizontal = clamp((Math.abs(mPointerX / mWidth - .5f) - .04f) / .22f);
         // A straight swipe to the top must work without a pause or a sideways detour.
@@ -326,30 +326,29 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
         mNormalRadius = simulator.getCurrentCornerRadius();
         if (mNormal.isEmpty()) return;
 
-        mHover.set(mNormal);
-        if (mFollowProgress == 0f) {
-            // Pulling back into overview restores its geometry and resets the next drag origin.
-            mFollowOriginX = Float.NaN;
-        } else {
-            if (Float.isNaN(mFollowOriginX)) {
+        mCurrent.set(mNormal);
+        if (mFollowProgress > 0f) {
+            if (mFollowOrigin.isEmpty()) {
+                // Capture the displayed card instead of centering it on an off-center touch.
+                // The first free-drag frame must coincide with the normal overview frame.
+                mFollowOrigin.set(mNormal);
                 mFollowOriginX = mPointerX;
-                mFollowOriginCenterX = mNormal.centerX();
+                mFollowOriginY = mPointerY;
+                mFollowOriginScale = mDragScale;
             }
-            // Follow displacement from the displayed card, not the absolute touch position.
-            // An off-center vertical swipe must not drag the app away from the overview stack.
-            float width = mNormal.width();
-            float height = mNormal.height();
-            float centerX = mFollowOriginCenterX + mPointerX - mFollowOriginX;
-            float left = Utilities.boundToRange(centerX - width / 2f, 6 * mDensity,
-                    Math.max(6 * mDensity, mWidth - width - 6 * mDensity));
-            // Overview already owns vertical shrinking and translation. Continue upward only
-            // after its minimum size, rather than anchoring the card below its normal position.
-            float top = Utilities.boundToRange(mNormal.top - mUpwardOverscroll,
-                    mHeight * .025f,
-                    Math.max(mHeight * .025f, mHeight - height - 24 * mDensity));
-            mHover.set(left, top, left + width, top + height);
+            // Position and size depend only on the gesture, not target reveal, springs, or
+            // background recents scrolling. Preserve the vertical grab point while resizing;
+            // keep horizontal shrinking centered so a vertical swipe cannot skew the card.
+            float scale = mDragScale / mFollowOriginScale;
+            float width = mFollowOrigin.width() * scale;
+            float height = mFollowOrigin.height() * scale;
+            float centerX = mFollowOrigin.centerX() + mPointerX - mFollowOriginX;
+            float left = centerX - width / 2f;
+            float top = mPointerY - (mFollowOriginY - mFollowOrigin.top) * scale;
+            // Do not clamp the dragged window to display margins. That creates a stationary
+            // shelf at the top and sides; only the size stops shrinking at its minimum.
+            mCurrent.set(left, top, left + width, top + height);
         }
-        interpolate(mNormal, mHover, mFollowProgress, mCurrent);
         updateMaterialPosition();
         long now = SystemClock.uptimeMillis();
         long dt = now - mVelocitySampleTime;
