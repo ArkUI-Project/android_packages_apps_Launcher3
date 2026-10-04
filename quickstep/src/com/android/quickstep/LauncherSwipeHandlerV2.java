@@ -133,6 +133,15 @@ public class LauncherSwipeHandlerV2 extends AbsSwipeUpHandler<
         return createIconHomeAnimationFactory(workspaceView, targetTaskView);
     }
 
+    @Override
+    protected HomeAnimationFactory createSmallWindowHomeAnimationFactory(long duration) {
+        if (mContainer == null) {
+            return super.createSmallWindowHomeAnimationFactory(duration);
+        }
+        mContainer.getRootView().setForceHideBackArrow(true);
+        return new LauncherHomeAnimationFactory();
+    }
+
     private HomeAnimationFactory createIconHomeAnimationFactory(
             View workspaceView, @Nullable TaskView targetTaskView) {
         RectF iconLocation = new RectF();

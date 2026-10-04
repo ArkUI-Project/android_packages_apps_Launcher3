@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copyright (C) 2026 The ArkUI Project. SPDX-License-Identifier: Apache-2.0 -->
+<resources>
+    <string name="arkui_small_window">小窗</string>
+    <string name="arkui_small_window_launch_failed">无法打开悬浮预览</string>
+    <string name="arkui_swipe_release_split">松手进入分屏</string>
+    <string name="arkui_swipe_release_window">松手进入小窗</string>
+</resources>

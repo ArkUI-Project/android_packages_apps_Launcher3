@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copyright (C) 2026 The ArkUI Project. SPDX-License-Identifier: Apache-2.0 -->
+<resources>
+    <string name="arkui_small_window">Small window</string>
+    <string name="arkui_small_window_launch_failed">Could not open a floating preview</string>
+    <string name="arkui_swipe_release_split">Release for split screen</string>
+    <string name="arkui_swipe_release_window">Release for a small window</string>
+</resources>

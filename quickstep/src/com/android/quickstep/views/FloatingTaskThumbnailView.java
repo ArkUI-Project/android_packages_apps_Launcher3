@@ -1,4 +1,5 @@
 /*
+ * Modified by the ArkUI Project in 2026 to preserve the swipe-to-split snapshot crop.
  * Copyright 2022 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,6 +23,7 @@ import android.graphics.BitmapShader;
 import android.graphics.Canvas;
 import android.graphics.Matrix;
 import android.graphics.Paint;
+import android.graphics.RectF;
 import android.graphics.Shader;
 import android.util.AttributeSet;
 import android.view.View;
@@ -48,6 +50,7 @@ public class FloatingTaskThumbnailView extends View {
 
     private @Nullable BitmapShader mBitmapShader;
     private @Nullable Bitmap mBitmap;
+    private @Nullable RectF mNormalizedCrop;
     private boolean mFitXY = false;
     private DrawCallback mDrawCallback;
 
@@ -69,9 +72,19 @@ public class FloatingTaskThumbnailView extends View {
             return;
         }
 
-        float scaleX = 1.0f * getMeasuredWidth() / mBitmap.getWidth();
-        float scaleY = 1.0f * getMeasuredHeight() / mBitmap.getHeight();
-        mMatrix.reset();
+        float sourceWidth = mBitmap.getWidth();
+        float sourceHeight = mBitmap.getHeight();
+        float sourceLeft = 0f;
+        float sourceTop = 0f;
+        if (mNormalizedCrop != null) {
+            sourceLeft = sourceWidth * mNormalizedCrop.left;
+            sourceTop = sourceHeight * mNormalizedCrop.top;
+            sourceWidth *= mNormalizedCrop.width();
+            sourceHeight *= mNormalizedCrop.height();
+        }
+        float scaleX = getMeasuredWidth() / sourceWidth;
+        float scaleY = getMeasuredHeight() / sourceHeight;
+        mMatrix.setTranslate(-sourceLeft, -sourceTop);
         // Either scale to fit x and y, or fit x and crop in y.
         mMatrix.postScale(scaleX, mFitXY ? scaleY : scaleX);
         mBitmapShader.setLocalMatrix(mMatrix);
@@ -84,6 +97,12 @@ public class FloatingTaskThumbnailView extends View {
             mBitmapShader = new BitmapShader(bitmap, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP);
             mPaint.setShader(mBitmapShader);
         }
+    }
+
+    /** Crop in bitmap fractions so reduced-resolution snapshots retain the live task's insets. */
+    public void setNormalizedCrop(RectF crop) {
+        mNormalizedCrop = crop.isEmpty() ? null : new RectF(crop);
+        invalidate();
     }
 
     /** Sets the callback to use to draw this view. */

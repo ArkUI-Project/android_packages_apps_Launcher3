@@ -1,4 +1,5 @@
 /*
+ * Modified by the ArkUI Project in 2026 to integrate native small windows.
  * Copyright (C) 2018 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,6 +18,7 @@
 package com.android.quickstep;
 
 import static android.app.WindowConfiguration.WINDOWING_MODE_FREEFORM;
+import static android.app.WindowConfiguration.WINDOWING_MODE_MINI_WINDOW_EXT;
 import static android.content.Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS;
 import static android.view.Display.DEFAULT_DISPLAY;
 
@@ -64,6 +66,7 @@ import com.android.systemui.shared.recents.view.AppTransitionAnimationSpecsFutur
 import com.android.systemui.shared.recents.view.RecentsTransition;
 import com.android.systemui.shared.system.ActivityManagerWrapper;
 import com.android.wm.shell.shared.desktopmode.DesktopModeStatus;
+import com.android.internal.arkui.SmallWindowSettings;
 
 import java.util.Collections;
 import java.util.List;
@@ -218,6 +221,12 @@ public interface TaskShortcutFactory {
             options.setSplashScreenStyle(SplashScreen.SPLASH_SCREEN_STYLE_ICON);
             if (ActivityManagerWrapper.getInstance().startActivityFromRecents(taskId,
                     options)) {
+                if (options.getLaunchWindowingMode() == WINDOWING_MODE_MINI_WINDOW_EXT) {
+                    // The native Shell handler owns the small-window transition.
+                    mTarget.getStatsLogManager().logger()
+                            .withItemInfo(mTaskContainer.getItemInfo()).log(mLauncherEvent);
+                    return;
+                }
                 final Runnable animStartedListener = () -> {
                     // Hide the task view and wait for the window to be resized
                     // TODO: Consider animating in launcher and do an in-place start activity
@@ -283,6 +292,19 @@ public interface TaskShortcutFactory {
 
         private ActivityOptions makeLaunchOptions(RecentsViewContainer container) {
             ActivityOptions activityOptions = ActivityOptions.makeBasic();
+            if (SmallWindowSettings.isSupported(container.asContext())) {
+                final Task task = mTaskContainer.getTask();
+                if (!SmallWindowSettings.isRecentsEnabled(container.asContext())
+                        || task.getTopComponent() == null
+                        || !SmallWindowSettings.isPackageAllowed(container.asContext(),
+                                task.getTopComponent().getPackageName())
+                        || ActivityManagerWrapper.getInstance().isLockToAppActive()) {
+                    return null;
+                }
+                activityOptions.setLaunchWindowingMode(WINDOWING_MODE_MINI_WINDOW_EXT);
+                activityOptions.setLaunchDisplayId(DEFAULT_DISPLAY);
+                return activityOptions;
+            }
             activityOptions.setLaunchWindowingMode(WINDOWING_MODE_FREEFORM);
             // Arbitrary bounds only because freeform is in dev mode right now
             final View decorView = container.getWindow().getDecorView();
@@ -384,7 +406,15 @@ public interface TaskShortcutFactory {
         public List<SystemShortcut> getShortcuts(RecentsViewContainer container,
                 TaskContainer taskContainer) {
             final Task task = taskContainer.getTask();
-            if (!task.isDockable) {
+            final boolean smallWindow = SmallWindowSettings.isSupported(container.asContext());
+            if (smallWindow) {
+                if (task.key.displayId != DEFAULT_DISPLAY || task.getTopComponent() == null
+                        || !SmallWindowSettings.isPackageAllowed(container.asContext(),
+                                task.getTopComponent().getPackageName())
+                        || ActivityManagerWrapper.getInstance().isLockToAppActive()) {
+                    return null;
+                }
+            } else if (!task.isDockable) {
                 return null;
             }
             if (!isAvailable(container)) {
@@ -393,11 +423,16 @@ public interface TaskShortcutFactory {
 
             return Collections.singletonList(new FreeformSystemShortcut(
                     R.drawable.ic_caption_desktop_button_foreground,
-                    R.string.recent_task_option_freeform, container, taskContainer,
+                    smallWindow ? R.string.arkui_small_window : R.string.recent_task_option_freeform,
+                    container, taskContainer,
                     LAUNCHER_SYSTEM_SHORTCUT_FREE_FORM_TAP));
         }
 
         private boolean isAvailable(RecentsViewContainer container) {
+            if (SmallWindowSettings.isSupported(container.asContext())) {
+                return SmallWindowSettings.isRecentsEnabled(container.asContext())
+                        && container.asContext().getDisplayId() == DEFAULT_DISPLAY;
+            }
             return Settings.Global.getInt(
                     container.asContext().getContentResolver(),
                     Settings.Global.DEVELOPMENT_ENABLE_FREEFORM_WINDOWS_SUPPORT, 0) != 0

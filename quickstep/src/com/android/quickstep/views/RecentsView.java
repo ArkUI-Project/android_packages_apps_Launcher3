@@ -1,4 +1,5 @@
 /*
+ * Modified by the ArkUI Project in 2026 for swipe-to-split handoff.
  * Copyright (C) 2017 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -232,6 +233,7 @@ import com.android.quickstep.util.LayoutUtils;
 import com.android.quickstep.util.RecentsAtomicAnimationFactory;
 import com.android.quickstep.util.RecentsOrientedState;
 import com.android.quickstep.util.SingleTask;
+import com.android.quickstep.util.SmallWindowSwipePreview;
 import com.android.quickstep.util.SplitAnimationController.Companion.SplitAnimInitProps;
 import com.android.quickstep.util.SplitAnimationTimings;
 import com.android.quickstep.util.SplitSelectStateController;
@@ -801,6 +803,9 @@ public abstract class RecentsView<
      */
     @Nullable
     private TaskView mSplitHiddenTaskView;
+    // Owned only by the ArkUI swipe entry; ordinary overview split selection leaves this null.
+    @Nullable
+    private SmallWindowSwipePreview mSplitSwipePreview;
     @Nullable
     private TaskView mSecondSplitHiddenView;
     @Nullable
@@ -2824,6 +2829,7 @@ public abstract class RecentsView<
             ? extends StatefulContainer<STATE_TYPE>> getStateManager();
 
     public void reset() {
+        clearSplitSwipePreview();
         Log.d(TAG, "reset - mEnableDrawingLiveTile: " + mEnableDrawingLiveTile
                 + ", mRecentsAnimationController: " + mRecentsAnimationController);
         setCurrentTask(-1);
@@ -3704,6 +3710,7 @@ public abstract class RecentsView<
      * and then animates it into the split position that was desired
      */
     private void createInitialSplitSelectAnimation(PendingAnimation anim) {
+        final SmallWindowSwipePreview swipePreview = mSplitSwipePreview;
         getPagedOrientationHandler().getInitialSplitPlaceholderBounds(mSplitPlaceholderSize,
                 mSplitPlaceholderInset, mContainer.getDeviceProfile(),
                 mSplitSelectStateController.getActiveSplitStagePosition(), mTempRect);
@@ -3726,11 +3733,19 @@ public abstract class RecentsView<
 
         FloatingTaskView firstFloatingTaskView = FloatingTaskView.getFloatingTaskView(mContainer,
                 splitAnimInitProps.getOriginalView(),
-                splitAnimInitProps.getOriginalBitmap(),
+                swipePreview != null && swipePreview.getSnapshot() != null
+                        ? swipePreview.getSnapshot() : splitAnimInitProps.getOriginalBitmap(),
                 splitAnimInitProps.getIconDrawable(), startingTaskRect);
+        if (swipePreview != null) {
+            // The live app can be far from its overview thumbnail when the finger is released.
+            // Initializing the floating view also updates startingTaskRect by reference.
+            firstFloatingTaskView.setInitialBoundsFromSwipe(swipePreview.getCurrentBounds(),
+                    swipePreview.getVisibleCornerRadius(), swipePreview.getSnapshotCrop());
+        }
         firstFloatingTaskView.setAlpha(1);
         firstFloatingTaskView.addStagingAnimation(anim, startingTaskRect, mTempRect,
-                splitAnimInitProps.getFadeWithThumbnail(), splitAnimInitProps.isStagedTask());
+                splitAnimInitProps.getFadeWithThumbnail(),
+                swipePreview == null && splitAnimInitProps.isStagedTask());
         mSplitSelectStateController.setFirstFloatingTaskView(firstFloatingTaskView);
 
         // Allow user to click staged app to launch into fullscreen
@@ -3759,12 +3774,24 @@ public abstract class RecentsView<
         anim.addListener(new AnimatorListenerAdapter() {
             @Override
             public void onAnimationStart(Animator animation) {
-                switchToScreenshot(
-                        () -> finishRecentsAnimation(true /* toHome */,
-                                false /* shouldPip */, null /* onFinishComplete */));
+                Runnable finish = () -> finishRecentsAnimation(true /* toHome */,
+                        false /* shouldPip */, null /* onFinishComplete */);
+                if (swipePreview != null) {
+                    // Replace the live app in the frame containing the staging view, which has
+                    // already inherited its bounds. Releasing recents earlier leaves a blank frame.
+                    swipePreview.handoffToSplit();
+                    if (mSplitSwipePreview == swipePreview) mSplitSwipePreview = null;
+                    if (!ViewUtils.postFrameDrawn(firstFloatingTaskView, finish)) finish.run();
+                } else {
+                    switchToScreenshot(finish);
+                }
             }
         });
         anim.addEndListener(success -> {
+            if (swipePreview != null) {
+                swipePreview.close();
+                if (mSplitSwipePreview == swipePreview) mSplitSwipePreview = null;
+            }
             if (success) {
                 InteractionJankMonitorWrapper.end(Cuj.CUJ_SPLIT_SCREEN_ENTER);
             } else {
@@ -5311,6 +5338,24 @@ public abstract class RecentsView<
         initiateSplitSelect(taskContainer, defaultSplitPosition, LAUNCHER_OVERVIEW_ACTIONS_SPLIT);
     }
 
+    /** Take ownership of this gesture's held app until the split staging view is drawn. */
+    public void initiateSplitSelectFromSwipe(TaskContainer taskContainer,
+            SmallWindowSwipePreview preview) {
+        clearSplitSwipePreview();
+        mSplitSwipePreview = preview;
+        setEnableDrawingLiveTile(false);
+        // The default-position overload is restricted to tablets; this phone gesture stages at top.
+        initiateSplitSelect(taskContainer,
+                com.android.launcher3.util.SplitConfigurationOptions.STAGE_POSITION_TOP_OR_LEFT,
+                LAUNCHER_OVERVIEW_ACTIONS_SPLIT);
+    }
+
+    private void clearSplitSwipePreview() {
+        if (mSplitSwipePreview == null) return;
+        mSplitSwipePreview.close();
+        mSplitSwipePreview = null;
+    }
+
     /** TODO(b/266477929): Consolidate this call w/ the one below */
     public void initiateSplitSelect(TaskContainer taskContainer,
             @StagePosition int stagePosition,
@@ -5593,6 +5638,7 @@ public abstract class RecentsView<
 
     @SuppressLint("WrongCall")
     private void resetFromSplitSelectionState() {
+        clearSplitSwipePreview();
         safeRemoveDragLayerView(mSplitSelectStateController.getFirstFloatingTaskView());
         safeRemoveDragLayerView(mSecondFloatingTaskView);
         safeRemoveDragLayerView(mSplitSelectStateController.getSplitInstructionsView());

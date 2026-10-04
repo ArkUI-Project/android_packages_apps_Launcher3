@@ -544,12 +544,23 @@ public class TaskViewSimulator implements TransformParams.BuilderProxy {
         );
     }
 
+    private TransformParams.BuilderProxy mGestureTransform;
+
+    /** Adds a task-specific gesture transform to the same transaction as overview. */
+    public void setGestureTransform(@Nullable TransformParams.BuilderProxy transform) {
+        mGestureTransform = transform;
+    }
+
     @Override
     public void onBuildTargetParams(
             SurfaceProperties builder, RemoteAnimationTarget app, TransformParams params) {
         builder.setMatrix(mMatrix)
                 .setWindowCrop(mTmpCropRect)
                 .setCornerRadius(getCurrentCornerRadius());
+
+        if (mGestureTransform != null) {
+            mGestureTransform.onBuildTargetParams(builder, app, params);
+        }
 
         if (mDrawsBelowRecents == null && mDrawAboveOtherApps == null) {
             // No reordering will be enforced.

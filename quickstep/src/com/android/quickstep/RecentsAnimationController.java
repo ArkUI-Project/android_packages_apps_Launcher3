@@ -1,4 +1,5 @@
 /*
+ * Modified by the ArkUI Project in 2026 for gesture-to-window handoff.
  * Copyright (C) 2018 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -58,6 +59,8 @@ public class RecentsAnimationController {
     private boolean mFinishRequested = false;
     // Only valid when mFinishRequested == true.
     private boolean mFinishTargetIsLauncher;
+    private int mFinishSmallWindowTaskId = -1;
+    private boolean mSmallWindowHandoffSucceeded;
     private RunnableList mPendingFinishCallbacks = new RunnableList();
 
     public RecentsAnimationController(RecentsAnimationControllerCompat controller,
@@ -128,6 +131,19 @@ public class RecentsAnimationController {
         finishController(toHome, onFinishComplete, sendUserLeaveHint, reason);
     }
 
+    /** Keep the animated task alive until Shell has synchronized its small-window configuration. */
+    @UiThread
+    public void finishToSmallWindow(int taskId, Consumer<Boolean> onFinishComplete) {
+        Preconditions.assertUIThread();
+        if (mFinishRequested) {
+            mPendingFinishCallbacks.add(() -> onFinishComplete.accept(false));
+            return;
+        }
+        mFinishSmallWindowTaskId = taskId;
+        finish(true, () -> onFinishComplete.accept(mSmallWindowHandoffSucceeded), false,
+                new ActiveGestureLog.CompoundString("ArkUI small-window handoff"));
+    }
+
     @UiThread
     public void finishController(
             boolean toHome,
@@ -145,25 +161,39 @@ public class RecentsAnimationController {
             boolean forceFinish,
             @NonNull ActiveGestureLog.CompoundString reason) {
         mPendingFinishCallbacks.add(callback);
-        if (!forceFinish && mFinishRequested) {
+        if (mFinishRequested && (!forceFinish || mFinishSmallWindowTaskId != -1)) {
             // If finish has already been requested, then add the callback to the pending list.
             // If already finished, then adding it to the destroyed RunnableList will just 
             // trigger the callback to be called immediately
+            // A small-window handoff is already committing atomically; do not submit it twice.
             return;
         }
         ActiveGestureProtoLogProxy.logFinishRecentsAnimation(toHome, reason);
         // Finish not yet requested
         mFinishRequested = true;
         mFinishTargetIsLauncher = toHome;
-        mOnFinishedListener.accept(this);
+        if (mFinishSmallWindowTaskId == -1) {
+            mOnFinishedListener.accept(this);
+        }
         Runnable finishCb = () -> {
-            mController.finish(toHome, sendUserLeaveHint, new IResultReceiver.Stub() {
+            IResultReceiver callbackReceiver = new IResultReceiver.Stub() {
                 @Override
                 public void send(int i, Bundle bundle) throws RemoteException {
                     ActiveGestureProtoLogProxy.logFinishRecentsAnimationCallback();
-                    MAIN_EXECUTOR.execute(mPendingFinishCallbacks::executeAllAndDestroy);
+                    MAIN_EXECUTOR.execute(() -> {
+                        if (mFinishSmallWindowTaskId != -1) {
+                            mSmallWindowHandoffSucceeded = i == 1;
+                            mOnFinishedListener.accept(RecentsAnimationController.this);
+                        }
+                        mPendingFinishCallbacks.executeAllAndDestroy();
+                    });
                 }
-            });
+            };
+            if (mFinishSmallWindowTaskId != -1) {
+                mController.finishToSmallWindow(mFinishSmallWindowTaskId, callbackReceiver);
+            } else {
+                mController.finish(toHome, sendUserLeaveHint, callbackReceiver);
+            }
             InteractionJankMonitorWrapper.end(Cuj.CUJ_LAUNCHER_QUICK_SWITCH);
             InteractionJankMonitorWrapper.end(Cuj.CUJ_LAUNCHER_APP_CLOSE_TO_HOME);
             InteractionJankMonitorWrapper.end(Cuj.CUJ_LAUNCHER_APP_SWIPE_TO_RECENTS);

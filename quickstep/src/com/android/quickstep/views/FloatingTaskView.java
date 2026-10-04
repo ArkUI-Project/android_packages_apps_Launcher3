@@ -1,4 +1,5 @@
 /*
+ * Modified by the ArkUI Project in 2026 for swipe-to-split handoff.
  * Copyright (C) 2023 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -226,6 +227,24 @@ public class FloatingTaskView extends FrameLayout {
         mOrientationHandler.setSecondaryScale(mSplitPlaceholderView.getIconView(), childScaleY);
     }
 
+    /** Start a gesture handoff at its actual display-space bounds, not the overview thumbnail. */
+    public void setInitialBoundsFromSwipe(RectF screenBounds, float cornerRadius,
+            RectF thumbnailCrop) {
+        mStartingPosition.set(screenBounds);
+        int[] location = mContainer.getDragLayer().getLocationOnScreen();
+        mStartingPosition.offset(-location[0], -location[1]);
+        BaseDragLayer.LayoutParams lp = new BaseDragLayer.LayoutParams(
+                Math.max(1, Math.round(mStartingPosition.width())),
+                Math.max(1, Math.round(mStartingPosition.height())));
+        initPosition(mStartingPosition, lp);
+        setLayoutParams(lp);
+        mSplitPlaceholderView.setLayoutParams(new FrameLayout.LayoutParams(lp.width, lp.height));
+        mFullscreenParams.mStartCornerRadius = cornerRadius;
+        mThumbnailView.setNormalizedCrop(thumbnailCrop);
+        setUseFitXYThumbnailScale();
+        update(mStartingPosition, 0f);
+    }
+
     public void updateOrientationHandler(RecentsPagedOrientationHandler orientationHandler) {
         mOrientationHandler = orientationHandler;
         mSplitPlaceholderView.getIconView().setRotation(mOrientationHandler.getDegreesRotated());
@@ -448,6 +467,7 @@ public class FloatingTaskView extends FrameLayout {
 
         private final float mCornerRadius;
         private final float mWindowCornerRadius;
+        private float mStartCornerRadius;
         public boolean mIsStagedTask;
         public final RectF mBounds = new RectF();
         public float mCurrentDrawnCornerRadius;
@@ -456,6 +476,7 @@ public class FloatingTaskView extends FrameLayout {
 
         public FullscreenDrawParams(Context context) {
             mCornerRadius = TaskCornerRadius.get(context);
+            mStartCornerRadius = mCornerRadius;
             mWindowCornerRadius = QuickStepContract.getWindowCornerRadius(context);
 
             mCurrentDrawnCornerRadius = mCornerRadius;
@@ -466,7 +487,7 @@ public class FloatingTaskView extends FrameLayout {
             mScaleX = scaleX;
             mScaleY = scaleY;
             mCurrentDrawnCornerRadius = mIsStagedTask ? mWindowCornerRadius :
-                    Utilities.mapRange(progress, mCornerRadius, mWindowCornerRadius);
+                    Utilities.mapRange(progress, mStartCornerRadius, mWindowCornerRadius);
         }
 
         public void setIsStagedTask(boolean isStagedTask) {

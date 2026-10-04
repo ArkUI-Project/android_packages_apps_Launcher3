@@ -393,6 +393,7 @@ public class OtherActivityInputConsumer extends ContextWrapper implements InputC
                 if (mInteractionHandler != null) {
                     if (mPassedWindowMoveSlop) {
                         // Move
+                        mInteractionHandler.updateGesturePosition(mLastPos.x, mLastPos.y);
                         mInteractionHandler.updateDisplacement(displacement - mStartDisplacement);
                     }
 
@@ -505,6 +506,11 @@ public class OtherActivityInputConsumer extends ContextWrapper implements InputC
                         : mNavBarPosition.isLeftEdge()
                                 ? -velocityXPxPerMs
                                 : velocityYPxPerMs;
+                int pointerIndex = ev.findPointerIndex(mActivePointerId);
+                if (pointerIndex >= 0) {
+                    mLastPos.set(ev.getX(pointerIndex), ev.getY(pointerIndex));
+                }
+                mInteractionHandler.updateGesturePosition(mLastPos.x, mLastPos.y);
                 mInteractionHandler.updateDisplacement(getDisplacement(ev) - mStartDisplacement);
                 mInteractionHandler.onGestureEnded(velocityPxPerMs,
                         new PointF(velocityXPxPerMs, velocityYPxPerMs),

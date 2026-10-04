@@ -1,4 +1,5 @@
 /*
+ * Modified by the ArkUI Project in 2026 for swipe window and split transitions.
  * Copyright (C) 2018 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -327,6 +328,17 @@ public abstract class AbsSwipeUpHandler<
     // Possible second animation running at the same time as mRunningWindowAnim
     private Animator mParallelRunningAnim;
     private boolean mIsMotionPaused;
+    private com.android.quickstep.util.SmallWindowSwipePreview mSmallWindowSwipe;
+    private float mSmallWindowContentAlpha;
+    private float mSmallWindowLastDistance;
+    private final PointF mSmallWindowPointer = new PointF(Float.NaN, Float.NaN);
+    private boolean mSmallWindowDisabledForGesture;
+    private boolean mSmallWindowHaptics;
+    private boolean mSmallWindowWasDrawingLiveTile;
+    private boolean mSmallWindowCommitted;
+    private int mSmallWindowReadyTarget;
+    private int mSplitTaskFromSwipe = -1;
+    private boolean mSmallWindowSettling;
     private boolean mHasMotionEverBeenPaused;
 
     private boolean mContinuingLastGesture;
@@ -828,6 +840,7 @@ public abstract class AbsSwipeUpHandler<
             @Override
             public void onMotionPauseDetected() {
                 mHasMotionEverBeenPaused = true;
+                armSmallWindowSwipe();
                 maybeUpdateRecentsAttachedState(true/* animate */, true/* moveRunningTask */);
                 Optional.ofNullable(mContainerInterface.getTaskbarInteractor())
                         .ifPresent(TaskbarInteractor::startTranslationSpring);
@@ -895,7 +908,8 @@ public abstract class AbsSwipeUpHandler<
             // The window is going away so make sure recents is always visible in this case.
             recentsAttachedToAppWindow = true;
         } else {
-            recentsAttachedToAppWindow = mHasMotionEverBeenPaused || mIsLikelyToStartNewTask;
+            recentsAttachedToAppWindow = mHasMotionEverBeenPaused || mIsLikelyToStartNewTask
+                    || mSmallWindowSwipe != null;
         }
 
         if (!isGestureMode) {
@@ -1022,6 +1036,123 @@ public abstract class AbsSwipeUpHandler<
         applyScrollAndTransform();
 
         updateLauncherTransitionProgress();
+        updateSmallWindowContentAlpha();
+    }
+
+    private void armSmallWindowSwipe() {
+        if (mSmallWindowSwipe != null || mSmallWindowDisabledForGesture
+                || mGestureState.getEndTarget() != null
+                || mContainer == null || mRecentsView == null
+                || mRecentsAnimationTargets == null || mRemoteTargetHandles.length != 1
+                || mIsSwipeForSplit || mIsLikelyToStartNewTask
+                || mGestureState.isTrackpadGesture()
+                || mContainer.getDeviceProfile().getDeviceProperties().isTablet()
+                || mContext.getResources().getConfiguration().orientation
+                        != android.content.res.Configuration.ORIENTATION_PORTRAIT
+                || !mDeviceState.isFullyGesturalNavMode()
+                || mDeviceState.isScreenPinningActive() || mDeviceState.isOverviewDisabled()
+                || mDeviceState.isKeyguardShowingOccluded()
+                || mGestureState.getDisplayId() != android.view.Display.DEFAULT_DISPLAY) {
+            return;
+        }
+        final RemoteAnimationTarget target = mRecentsAnimationTargets.findTask(
+                mGestureState.getTopRunningTaskId());
+        if (target == null || target.taskInfo == null || target.taskInfo.topActivity == null
+                || target.taskInfo.userId != android.os.UserHandle.myUserId()
+                || target.taskInfo.getActivityType()
+                        != android.app.WindowConfiguration.ACTIVITY_TYPE_STANDARD
+                || target.taskInfo.getWindowingMode()
+                        != android.app.WindowConfiguration.WINDOWING_MODE_FULLSCREEN) return;
+        final TaskViewSimulator simulator = mRemoteTargetHandles[0].getTaskViewSimulator();
+        if (simulator.getCurrentCropRect().isEmpty()) return;
+        // Cache policy once when the target is ready, never read Settings on every MOVE.
+        mSmallWindowDisabledForGesture =
+                !com.android.internal.arkui.SmallWindowSettings.isSwipeUpEnabled(mContext)
+                || !com.android.internal.arkui.SmallWindowSettings.isPackageAllowed(mContext,
+                        target.taskInfo.topActivity.getPackageName());
+        if (mSmallWindowDisabledForGesture) return;
+        mSmallWindowHaptics = com.android.internal.arkui.SmallWindowSettings.getBoolean(mContext,
+                android.provider.Settings.System.ARKUI_SMALL_WINDOW_HAPTICS,
+                true, android.os.UserHandle.USER_CURRENT);
+        mSmallWindowContentAlpha = mRecentsView.getContentAlpha();
+        mSmallWindowWasDrawingLiveTile = mRecentsView.getEnableDrawingLiveTile();
+        mRecentsView.setEnableDrawingLiveTile(false);
+        final boolean canSplit = com.android.quickstep.views.LauncherRecentsView.class
+                .isInstance(mRecentsView)
+                && target.taskInfo.supportsMultiWindow
+                && android.app.ActivityTaskManager.supportsSplitScreenMultiWindow(mContext)
+                && (mDeviceState.getSysuiStateFlags() & com.android.systemui.shared.system
+                        .QuickStepContract.SYSUI_STATE_DISABLE_GESTURE_SPLIT_INVOCATION) == 0;
+        mSmallWindowSwipe = new com.android.quickstep.util.SmallWindowSwipePreview(mContext,
+                mRemoteTargetHandles[0], target, mContainer.getDragLayer(), canSplit,
+                this::updateSmallWindowContentAlpha);
+        maybeUpdateRecentsAttachedState(true, true);
+    }
+
+    private void updateSmallWindowContentAlpha() {
+        if (mRecentsView != null && mSmallWindowSwipe != null) {
+            // Fading the entire RecentsView creates a clipped hardware layer around the
+            // overshooting task cards. Use its existing per-child alpha instead.
+            // Keep the applier's view visible even when all sibling cards have faded away.
+            mRecentsView.setContentAlpha(Math.max(.001f, mSmallWindowSwipe.getRecentsAlpha()));
+        }
+    }
+
+    private void clearSmallWindowSwipe() {
+        if (mSmallWindowSwipe != null) {
+            mSmallWindowSwipe.close();
+            if (mRecentsView != null && mGestureState.getEndTarget() != HOME) {
+                mRecentsView.setContentAlpha(mGestureState.getEndTarget() == RECENTS
+                        ? 1f : mSmallWindowContentAlpha);
+                if (mGestureState.getEndTarget() == null) {
+                    mRecentsView.setEnableDrawingLiveTile(mSmallWindowWasDrawingLiveTile);
+                }
+            }
+        }
+        mSmallWindowSwipe = null;
+        mSmallWindowCommitted = false;
+        mSmallWindowSettling = false;
+        mSmallWindowReadyTarget = 0;
+    }
+
+    public void updateGesturePosition(float x, float y) {
+        mSmallWindowPointer.set(x, y);
+    }
+
+    @Override
+    public void updateDisplacement(float displacement) {
+        mSmallWindowLastDistance = Math.max(0f, -displacement);
+        if (mSmallWindowSwipe == null && mGestureState.getEndTarget() == null
+                && mSmallWindowLastDistance
+                        >= mContext.getResources().getDisplayMetrics().heightPixels * .20f) {
+            armSmallWindowSwipe();
+        }
+        if (mSmallWindowSwipe != null && mGestureState.getEndTarget() == null) {
+            final android.util.DisplayMetrics metrics = mContext.getResources().getDisplayMetrics();
+            mSmallWindowSwipe.updateGesture(Float.isNaN(mSmallWindowPointer.x)
+                            ? metrics.widthPixels / 2f : mSmallWindowPointer.x,
+                    Float.isNaN(mSmallWindowPointer.y)
+                            ? metrics.heightPixels - mSmallWindowLastDistance : mSmallWindowPointer.y,
+                    mSmallWindowLastDistance);
+            final int ready = mSmallWindowSwipe.progress >= .65f
+                    ? mSmallWindowSwipe.getTarget() : 0;
+            if (ready != 0 && ready != mSmallWindowReadyTarget && mSmallWindowHaptics) {
+                performHapticFeedback();
+            }
+            if (ready != 0 && ready != mSmallWindowReadyTarget && mRecentsView != null) {
+                mRecentsView.announceForAccessibility(mContext.getString(ready
+                        == com.android.quickstep.util.SmallWindowSwipePreview.TARGET_SPLIT
+                        ? R.string.arkui_swipe_release_split : R.string.arkui_swipe_release_window));
+            }
+            mSmallWindowReadyTarget = ready;
+        }
+        final float previousShift = mCurrentShift.value;
+        super.updateDisplacement(displacement);
+        // Horizontal motion can change the selected target without changing the vertical shift.
+        if (mSmallWindowSwipe != null && previousShift == mCurrentShift.value) {
+            applyScrollAndTransform();
+        }
+        updateSmallWindowContentAlpha();
     }
 
     private void updateLauncherTransitionProgress() {
@@ -1127,6 +1258,7 @@ public abstract class AbsSwipeUpHandler<
 
     @Override
     public void onRecentsAnimationCanceled(HashMap<Integer, ThumbnailData> thumbnailDatas) {
+        clearSmallWindowSwipe();
         ActiveGestureProtoLogProxy.logAbsSwipeUpHandlerOnRecentsAnimationCanceled();
         mContextInitListener.unregister("AbsSwipeUpHandler.onRecentsAnimationCanceled");
         mStateCallback.setStateOnUiThread(STATE_GESTURE_CANCELLED | STATE_HANDLER_INVALIDATED);
@@ -1380,6 +1512,9 @@ public abstract class AbsSwipeUpHandler<
             return endTarget;
         }
 
+        if (mSmallWindowCommitted && !isCancel) return HOME;
+        if (mSplitTaskFromSwipe != -1 && !isCancel) return RECENTS;
+
         GestureEndTarget endTarget;
         ActiveGestureLog.CompoundString potentialReason =
                 ActiveGestureLog.CompoundString.newEmptyString();
@@ -1568,6 +1703,52 @@ public abstract class AbsSwipeUpHandler<
             PointF velocityPxPerMs,
             boolean isCancel,
             boolean horizontalTouchSlopPassed) {
+        final boolean selected = !isCancel
+                && mSmallWindowSwipe != null && mSmallWindowSwipe.progress >= .65f
+                && com.android.internal.arkui.SmallWindowSettings.isSwipeUpEnabled(mContext)
+                && !mDeviceState.isScreenPinningActive()
+                && !mDeviceState.isKeyguardShowingOccluded();
+        mSmallWindowCommitted = selected && mSmallWindowSwipe.getTarget()
+                == com.android.quickstep.util.SmallWindowSwipePreview.TARGET_SMALL_WINDOW;
+        if (selected && mSmallWindowSwipe.getTarget()
+                == com.android.quickstep.util.SmallWindowSwipePreview.TARGET_SPLIT
+                && (mDeviceState.getSysuiStateFlags() & com.android.systemui.shared.system
+                        .QuickStepContract.SYSUI_STATE_DISABLE_GESTURE_SPLIT_INVOCATION) == 0) {
+            mSplitTaskFromSwipe = mGestureState.getTopRunningTaskId();
+            // Hold the exact release frame until the split staging view can take it over.
+            // Returning to the overview transform here causes a visible detour and a size jump.
+            mSmallWindowSettling = true;
+            mSmallWindowSwipe.beginRelease(false);
+        }
+        if (!mSmallWindowCommitted && mSplitTaskFromSwipe == -1 && mSmallWindowSwipe != null
+                && mSmallWindowSwipe.progress > 0f) {
+            mSmallWindowSettling = true;
+            mSmallWindowSwipe.beginRelease(false);
+            final ValueAnimator rollback = ValueAnimator.ofFloat(0f, 1f);
+            rollback.setDuration(180);
+            rollback.addUpdateListener(anim -> {
+                if (mSmallWindowSwipe != null) {
+                    mSmallWindowSwipe.progress = (float) anim.getAnimatedValue();
+                    mSmallWindowSwipe.apply();
+                    updateSmallWindowContentAlpha();
+                }
+            });
+            rollback.addListener(new AnimationSuccessListener() {
+                @Override
+                public void onAnimationSuccess(Animator animation) {
+                    clearSmallWindowSwipe();
+                    if (mRecentsAnimationController != null && !mCanceled
+                            && !mStateCallback.hasStates(STATE_HANDLER_INVALIDATED)) {
+                        handleNormalGestureEnd(0f, false, new PointF(), isCancel,
+                                horizontalTouchSlopPassed);
+                    }
+                }
+            });
+            mRunningWindowAnim = new RunningWindowAnim[]{RunningWindowAnim.wrap(rollback)};
+            rollback.start();
+            return;
+        }
+        if (!mSmallWindowCommitted && mSplitTaskFromSwipe == -1) clearSmallWindowSwipe();
         long duration = MAX_SWIPE_DURATION;
         float currentShift = mCurrentShift.value;
         final GestureEndTarget endTarget = calculateEndTarget(
@@ -1768,10 +1949,17 @@ public abstract class AbsSwipeUpHandler<
             RemoteAnimationTarget runningTaskTarget,
             @Nullable TaskView targetTaskView);
 
+    protected HomeAnimationFactory createSmallWindowHomeAnimationFactory(long duration) {
+        // The task stays visible in a corner; do not ask the home app for an icon target.
+        return createHomeAnimationFactory(java.util.Collections.emptyList(), duration,
+                false, false, null, null);
+    }
+
     private final TaskStackChangeListener mActivityRestartListener = new TaskStackChangeListener() {
         @Override
         public void onActivityRestartAttempt(ActivityManager.RunningTaskInfo task,
                 boolean homeTaskVisible, boolean clearedTask, boolean wasVisible) {
+            if (mSmallWindowCommitted) return;
             boolean taskRunningAndNotHome = Arrays.stream(mGestureState
                             .getRunningTaskIds(true /*getMultipleTasks*/))
                     .anyMatch(taskId -> task.taskId == taskId
@@ -1841,6 +2029,22 @@ public abstract class AbsSwipeUpHandler<
             }
         }
 
+        if (mSmallWindowCommitted && mSmallWindowSwipe != null) {
+            animateSmallWindowToCorner();
+            return;
+        }
+        if (mSplitTaskFromSwipe != -1 && mSmallWindowSwipe != null && target == RECENTS) {
+            // Prepare the chooser underneath the held live app. Split's own animation starts
+            // at the gesture bounds, rather than playing a second app-to-overview animation.
+            mCurrentShift.updateValue(1f);
+            if (mRecentsView != null) {
+                mRecentsView.abortScrollerAnimation();
+                mRecentsView.setCurrentPage(mRecentsView.getRunningTaskIndex());
+            }
+            mGestureState.setState(STATE_RECENTS_SCROLLING_FINISHED
+                    | STATE_END_TARGET_ANIMATION_FINISHED);
+            return;
+        }
         if (mGestureState.getEndTarget() == HOME) {
             getOrientationHandler().adjustFloatingIconStartVelocity(velocityPxPerMs);
             // Take first task ID, if there are multiple we don't have any special home
@@ -2065,6 +2269,45 @@ public abstract class AbsSwipeUpHandler<
                     frameTimeNanos -> handOffAnimationInternal(
                             frameTimeNanos / TimeUtils.NANOS_PER_MS, velocityPxPerMs));
         }
+    }
+
+    private void animateSmallWindowToCorner() {
+        mSmallWindowSettling = true;
+        mSmallWindowSwipe.beginRelease(true);
+        final HomeAnimationFactory home = createSmallWindowHomeAnimationFactory(220);
+        final AnimatorPlaybackController launcher = home.createActivityAnimationToHome();
+        launcher.dispatchOnStart();
+        home.playAtomicAnimation(0f);
+        mLauncherTransitionController = null;
+        final ValueAnimator animator = ValueAnimator.ofFloat(0f, 1f);
+        animator.setDuration(220);
+        animator.setInterpolator(DECELERATE);
+        animator.addUpdateListener(value -> {
+            if (mSmallWindowSwipe == null) return;
+            mSmallWindowSwipe.progress = (float) value.getAnimatedValue();
+            mSmallWindowSwipe.apply();
+            launcher.setPlayFraction(value.getAnimatedFraction());
+            updateSmallWindowContentAlpha();
+        });
+        animator.addListener(new AnimationSuccessListener() {
+            @Override
+            public void onAnimationCancel(Animator animation) {
+                super.onAnimationCancel(animation);
+                launcher.dispatchOnCancel();
+                home.onCancel();
+            }
+
+            @Override
+            public void onAnimationSuccess(Animator animation) {
+                if (mRecentsAnimationController != null && mSmallWindowCommitted) {
+                    launcher.dispatchOnEnd();
+                    mGestureState.setState(STATE_RECENTS_SCROLLING_FINISHED
+                            | STATE_END_TARGET_ANIMATION_FINISHED);
+                }
+            }
+        });
+        mRunningWindowAnim = new RunningWindowAnim[]{RunningWindowAnim.wrap(animator)};
+        animator.start();
     }
 
     private void handOffAnimationInternal(long timestamp, PointF velocityPxPerMs) {
@@ -2410,6 +2653,11 @@ public abstract class AbsSwipeUpHandler<
         ActiveGestureProtoLogProxy.logAbsSwipeUpHandlerCancelCurrentAnimation();
         mCanceled = true;
         mCurrentShift.cancelAnimation();
+        if (mSmallWindowSwipe != null) {
+            if (mSmallWindowSettling) endRunningWindowAnim(true);
+            clearSmallWindowSwipe();
+        }
+        mSplitTaskFromSwipe = -1;
 
         // Cleanup when switching handlers
         mInputConsumerProxy.unregisterOnTouchDownCallback();
@@ -2420,6 +2668,8 @@ public abstract class AbsSwipeUpHandler<
     }
 
     private void invalidateHandler() {
+        clearSmallWindowSwipe();
+        mSplitTaskFromSwipe = -1;
         if (!mContainerInterface.isInLiveTileMode() || mGestureState.getEndTarget() != RECENTS) {
             mInputConsumerProxy.destroy();
             mTaskAnimationManager.setLiveTileCleanUpHandler(null);
@@ -2498,6 +2748,12 @@ public abstract class AbsSwipeUpHandler<
     }
 
     protected void switchToScreenshot() {
+        if (mSmallWindowCommitted) {
+            // Shell keeps the live app through its synchronized resize. An unused task snapshot
+            // here only stalls the handoff with a GPU readback after the release animation.
+            setScreenshotCapturedState();
+            return;
+        }
         if (!hasTargets()) {
             // If there are no targets, then we don't need to capture anything
             mStateCallback.setStateOnUiThread(STATE_SCREENSHOT_CAPTURED);
@@ -2567,6 +2823,28 @@ public abstract class AbsSwipeUpHandler<
     }
 
     private void finishCurrentTransitionToHome() {
+        if (mSmallWindowCommitted && mSmallWindowSwipe != null
+                && mRecentsAnimationController != null && mContainer != null) {
+            final int taskId = mGestureState.getTopRunningTaskId();
+            // Launching our own task is intentional. The restart listener otherwise
+            // immediately relaunches it with null options, undoing the small-window mode.
+            TaskStackChangeListeners.getInstance().unregisterTaskStackListener(
+                    mActivityRestartListener);
+            // Shell changes the task's mode inside the recents finish transaction. Keep the
+            // live leash until the resized app is ready; finishing to Home first hides it.
+            mRecentsAnimationController.finishToSmallWindow(taskId, launched -> {
+                if (!launched) android.widget.Toast.makeText(mContext,
+                        R.string.arkui_small_window_launch_failed,
+                        android.widget.Toast.LENGTH_SHORT).show();
+                clearSmallWindowSwipe();
+                mStateCallback.setStateOnUiThread(STATE_CURRENT_TASK_FINISHED);
+            });
+            if (mSwipePipToHomeReleaseCheck != null) {
+                mSwipePipToHomeReleaseCheck.setCanRelease(true);
+                mSwipePipToHomeReleaseCheck = null;
+            }
+            return;
+        }
         if (!hasTargets() || mRecentsAnimationController == null) {
             // If there are no targets or the animation not started, then there is nothing to finish
             mStateCallback.setStateOnUiThread(STATE_CURRENT_TASK_FINISHED);
@@ -2643,6 +2921,24 @@ public abstract class AbsSwipeUpHandler<
 
         SystemUiProxy.INSTANCE.get(mContext).onOverviewShown(false, TAG);
         doLogGesture(RECENTS, mRecentsView.getCurrentPageTaskView());
+        final int splitTaskId = mSplitTaskFromSwipe;
+        final RecentsView recents = mRecentsView;
+        final TaskView taskView = splitTaskId == -1 ? null
+                : recents.getTaskViewByTaskId(splitTaskId);
+        final TaskContainer task = taskView == null ? null
+                : taskView.getTaskContainerById(splitTaskId);
+        if (task != null && task.getTask().isDockable && recents.isAttachedToWindow()
+                && !recents.isSplitSelectionActive() && mSmallWindowSwipe != null) {
+            final com.android.quickstep.util.SmallWindowSwipePreview preview = mSmallWindowSwipe;
+            final ThumbnailData snapshot = mTaskSnapshotCache.get(splitTaskId);
+            preview.setSnapshot(snapshot == null ? null : snapshot.getThumbnail());
+            mSmallWindowSwipe = null; // RecentsView now owns the preview until its first split frame.
+            reset();
+            recents.setEnableDrawingLiveTile(false);
+            preview.apply();
+            recents.initiateSplitSelectFromSwipe(task, preview);
+            return;
+        }
         reset();
     }
 
@@ -3067,6 +3363,11 @@ public abstract class AbsSwipeUpHandler<
      * Applies the transform on the recents animation
      */
     protected void applyScrollAndTransform() {
+        if (mSmallWindowSwipe != null && mSmallWindowSettling) {
+            // Release owns the frozen frame; dragging uses TaskViewSimulator's one transaction.
+            mSmallWindowSwipe.apply();
+            return;
+        }
         // No need to apply any transform if there is ongoing swipe-to-home animator
         //    swipe-to-pip handles the leash solely
         //    swipe-to-icon animation is handled by RectFSpringAnim anim

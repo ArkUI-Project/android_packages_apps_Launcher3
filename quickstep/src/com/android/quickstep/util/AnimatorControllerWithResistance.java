@@ -46,8 +46,13 @@ import com.android.quickstep.views.RecentsView;
  */
 public class AnimatorControllerWithResistance {
 
+    // Display-relative geometry from the portrait app/overview gesture reference.
+    public static final float PHONE_MIN_WINDOW_SCALE = .245f;
+    public static final float PHONE_WINDOW_SHRINK_RATE = 1.35f;
+
     private enum RecentsResistanceParams {
         FROM_APP(0.75f, 0.5f, 1f, false),
+        FROM_APP_PORTRAIT(1f, 0.30f, 0.65f, false),
         FROM_APP_TABLET(1f, 0.7f, 1f, true),
         FROM_OVERVIEW(1f, 0.75f, 0.5f, false);
 
@@ -169,6 +174,29 @@ public class AnimatorControllerWithResistance {
         float fullscreenScale = params.recentsOrientedState.getFullScreenScaleAndPivot(
                 startRect, params.dp, pivot);
 
+        if (params.resistanceParams == RecentsResistanceParams.FROM_APP_PORTRAIT) {
+            // Continue the phone's app-to-overview shrink with the finger, without the old
+            // decelerating plateau. Both TaskViewSimulator and RecentsView use this profile.
+            // Leave room above the card for the two drag targets, including at full overswipe.
+            float endScale = PHONE_MIN_WINDOW_SCALE * fullscreenScale;
+            RectF endRect = new RectF(startRect);
+            Matrix matrix = new Matrix();
+            matrix.setScale(endScale, endScale, pivot.x, pivot.y);
+            matrix.mapRect(endRect);
+            float endTranslation = (endRect.top
+                    - params.dp.getDeviceProperties().getHeightPx() * .14f)
+                    * orientationHandler.getSecondaryTranslationDirectionFactor();
+            float overviewDistance = (1f - 1f / fullscreenScale) / PHONE_WINDOW_SHRINK_RATE;
+            float minimumDistance = (1f - PHONE_MIN_WINDOW_SCALE) / PHONE_WINDOW_SHRINK_RATE;
+            float stopFraction = (minimumDistance - overviewDistance) / (1f - overviewDistance);
+            TimeInterpolator followFinger = t -> Math.min(1f, t / Math.max(.01f, stopFraction));
+            resistAnim.addFloat(params.scaleTarget, params.scaleProperty,
+                    params.startScale, endScale, followFinger);
+            resistAnim.addFloat(params.translationTarget, params.translationProperty,
+                    params.startTranslation, endTranslation, followFinger);
+            return resistAnim;
+        }
+
         // Compute where the task view would be based on the end scale.
         RectF endRectF = new RectF(startRect);
         Matrix temp = new Matrix();
@@ -258,6 +286,12 @@ public class AnimatorControllerWithResistance {
             this.translationProperty = translationProperty;
             if (dp.getDeviceProperties().isTablet()) {
                 resistanceParams = RecentsResistanceParams.FROM_APP_TABLET;
+            } else if (dp.getDeviceProperties().getHeightPx()
+                    > dp.getDeviceProperties().getWidthPx()
+                    && com.android.launcher3.util.DisplayController.getNavigationMode(context)
+                            == com.android.launcher3.util.NavigationMode.NO_BUTTON
+                    && recentsOrientedState.getOrientationHandler().isLayoutNaturalToLauncher()) {
+                resistanceParams = RecentsResistanceParams.FROM_APP_PORTRAIT;
             } else {
                 resistanceParams = RecentsResistanceParams.FROM_APP;
             }

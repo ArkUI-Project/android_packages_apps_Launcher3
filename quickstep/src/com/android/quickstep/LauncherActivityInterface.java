@@ -73,6 +73,18 @@ public final class LauncherActivityInterface extends
     public int getSwipeUpDestinationAndLength(DeviceProfile dp, Context context, Rect outRect,
             RecentsPagedOrientationHandler orientationHandler) {
         calculateTaskSize(context, dp, outRect, orientationHandler);
+        if (!dp.getDeviceProperties().isTablet()
+                && dp.getDeviceProperties().getHeightPx() > dp.getDeviceProperties().getWidthPx()
+                && orientationHandler.isLayoutNaturalToLauncher()
+                && DisplayController.getNavigationMode(context) == NavigationMode.NO_BUTTON) {
+            float overviewScale = Math.min(
+                    (float) outRect.width() / dp.getDeviceProperties().getWidthPx(),
+                    (float) outRect.height() / dp.getDeviceProperties().getHeightPx());
+            // The initial shrink and the overswipe continue at the same display-relative rate.
+            return Math.max(1, Math.round(dp.getDeviceProperties().getHeightPx()
+                    * (1f - overviewScale)
+                    / AnimatorControllerWithResistance.PHONE_WINDOW_SHRINK_RATE));
+        }
         if (dp.isVerticalBarLayout()
                 && DisplayController.getNavigationMode(context) != NavigationMode.NO_BUTTON) {
             return dp.isSeascape() ? outRect.left : (dp.getDeviceProperties().getWidthPx() - outRect.right);
@@ -120,10 +132,15 @@ public final class LauncherActivityInterface extends
                 // Animate the blur and wallpaper zoom
                 float fromDepthRatio = BACKGROUND_APP.getDepth(activity);
                 float toDepthRatio = OVERVIEW.getDepth(activity);
+                boolean portraitPhone = !activity.getDeviceProfile().getDeviceProperties().isTablet()
+                        && activity.getDeviceProfile().getDeviceProperties().getHeightPx()
+                                > activity.getDeviceProfile().getDeviceProperties().getWidthPx();
+                if (portraitPhone) fromDepthRatio = 0f;
                 pa.addFloat(getDepthController().stateDepth,
                         new LauncherAnimUtils.ClampedProperty<>(
                                 MULTI_PROPERTY_VALUE, fromDepthRatio, toDepthRatio),
-                        fromDepthRatio, toDepthRatio, LINEAR);
+                        fromDepthRatio, toDepthRatio,
+                        portraitPhone ? progress -> Math.min(1f, progress / .6f) : LINEAR);
             }
         };
 
