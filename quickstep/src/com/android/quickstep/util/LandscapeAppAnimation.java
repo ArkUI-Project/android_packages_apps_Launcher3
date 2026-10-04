@@ -6,6 +6,7 @@ package com.android.quickstep.util;
 
 import static android.app.WindowConfiguration.WINDOWING_MODE_FULLSCREEN;
 import static android.content.res.Configuration.ORIENTATION_LANDSCAPE;
+import static android.content.res.Configuration.ORIENTATION_UNDEFINED;
 import static android.util.RotationUtils.deltaRotation;
 
 import android.animation.ValueAnimator;
@@ -38,11 +39,7 @@ public final class LandscapeAppAnimation {
                 && target.windowConfiguration.getWindowingMode() == WINDOWING_MODE_FULLSCREEN
                 && !profile.getDeviceProperties().isLandscape()
                 && !profile.getDeviceProperties().isTablet()
-                && (target.taskInfo.configuration.orientation == ORIENTATION_LANDSCAPE
-                        || isFixedLandscape(target)
-                        || target.screenSpaceBounds.width() > target.screenSpaceBounds.height()
-                        || (target.startBounds != null
-                                && target.startBounds.width() > target.startBounds.height()))
+                && isCurrentlyLandscape(target)
                 && LauncherPrefs.get(context).get(LauncherPrefs.LANDSCAPE_APP_ANIMATION)
                 && ValueAnimator.areAnimatorsEnabled()
                 && !RemoveAnimationSettingsTracker.INSTANCE.get(context).isRemoveAnimationEnabled();
@@ -91,15 +88,21 @@ public final class LandscapeAppAnimation {
         return quarterTurn(resolveLandscapeDelta(target, delta));
     }
 
-    private static boolean isFixedLandscape(RemoteAnimationTarget target) {
-        final ActivityInfo info = target.taskInfo.topActivityInfo;
-        if (info == null) {
-            return false;
+    private static boolean isCurrentlyLandscape(RemoteAnimationTarget target) {
+        // These are the top activity's current bounds, including its runtime orientation
+        // request. During a fixed-rotation launch they can already be landscape while the
+        // containing task still has the launcher's portrait configuration.
+        final Rect appBounds = target.taskInfo.appCompatTaskInfo.topActivityAppBounds;
+        if (!appBounds.isEmpty()) {
+            return appBounds.width() > appBounds.height();
         }
-        return info.screenOrientation == ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
-                || info.screenOrientation == ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE
-                || info.screenOrientation == ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-                || info.screenOrientation == ActivityInfo.SCREEN_ORIENTATION_USER_LANDSCAPE;
+        final int orientation = target.taskInfo.configuration.orientation;
+        if (orientation != ORIENTATION_UNDEFINED) {
+            return orientation == ORIENTATION_LANDSCAPE;
+        }
+        // Fall back only when current activity/task orientation is unavailable. The manifest
+        // and startBounds may still describe landscape after the app has switched to portrait.
+        return target.screenSpaceBounds.width() > target.screenSpaceBounds.height();
     }
 
     private static int resolveLandscapeDelta(RemoteAnimationTarget target, int delta) {
