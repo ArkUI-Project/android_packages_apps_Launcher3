@@ -54,6 +54,7 @@ import com.android.quickstep.util.RectFSpringAnim;
 import com.android.quickstep.util.RectFSpringAnim.DefaultSpringConfig;
 import com.android.quickstep.util.RectFSpringAnim.TaskbarHotseatSpringConfig;
 import com.android.quickstep.util.SurfaceTransaction.SurfaceProperties;
+import com.android.quickstep.util.SystemBarFollowAnimation;
 import com.android.quickstep.util.TaskViewSimulator;
 import com.android.quickstep.util.TransformParams;
 import com.android.quickstep.util.TransformParams.BuilderProxy;
@@ -456,6 +457,8 @@ public abstract class SwipeUpAnimationLogic implements
 
         final AnimatorPlaybackController mHomeAnim;
         final RectF mCropRectF;
+        final float mVerticalCropAnchor;
+        final int mCropSourceHeight;
 
         final float mStartRadius;
         final float mEndRadius;
@@ -516,6 +519,9 @@ public abstract class SwipeUpAnimationLogic implements
             mRunningTaskViewStartRectF = invariantStartRect;
             mTargetTaskView = factory.getTargetTaskView();
             final RemoteAnimationTargets targets = transformParams.getTargetSet();
+            mVerticalCropAnchor = taskViewSimulator.getCurrentVerticalCropAnchor();
+            mCropSourceHeight = targets != null && targets.apps.length == 1
+                    ? targets.getFirstAppTarget().screenSpaceBounds.height() : 0;
             mMotionState = !mIsSwipeForSplit && mTargetTaskView == null
                     && factory.supportsLandscapeAnimation() && targets != null
                     && targets.apps.length == 1
@@ -548,7 +554,8 @@ public abstract class SwipeUpAnimationLogic implements
                     && !targets.getFirstAppTarget().isTranslucent) {
                 homeToWindowPositionMap.invert(mWindowToHome);
                 mSnapshot = new WindowAnimationSnapshot(host, targets.getFirstAppTarget().leash,
-                        mCropRect, mMotionState);
+                        mCropRect, mMotionState, SystemBarFollowAnimation.getSurface(targets,
+                                targets.getFirstAppTarget()));
                 windowAnimation.setOnCancelContinuation(() -> mSnapshot.continueAnimation(
                         windowAnimation, this::updateSnapshot));
             } else {
@@ -565,6 +572,8 @@ public abstract class SwipeUpAnimationLogic implements
                 LandscapeAppAnimation.applyClosingTransform(mMatrix, mCropRectF,
                         mWindowCurrentRect, mStartMatrixRotation, mLandscapeRotation,
                         progress, mCropRect, mMotion, mBaseMatrixRotation);
+                AppWindowAnimationState.applyVerticalCropAnchor(mMatrix, mCropRect,
+                        mCropSourceHeight, mVerticalCropAnchor);
                 radius = Math.min(radius, Math.min(mCropRect.width(), mCropRect.height()) / 2f);
             }
             return radius;
@@ -583,7 +592,7 @@ public abstract class SwipeUpAnimationLogic implements
             mSnapshotMatrix.setConcat(mWindowToHome, mMatrix);
             mSnapshot.update(mSnapshotMatrix, mCropRect, radius,
                     mAnimationFactory.getWindowAlpha(progress), currentRect,
-                    getOpenness(progress), mSnapshotMatrix.mapRadius(radius));
+                    getOpenness(progress), mSnapshotMatrix.mapRadius(radius), mVerticalCropAnchor);
         }
 
         @Override
@@ -613,7 +622,7 @@ public abstract class SwipeUpAnimationLogic implements
                     mLocalTransformParams.createSurfaceParams(this));
             if (mMotionState != null) {
                 mMotionState.record(currentRect, getOpenness(progress),
-                        mMatrix.mapRadius(cornerRadius));
+                        mMatrix.mapRadius(cornerRadius), mVerticalCropAnchor);
             }
 
             mAnimationFactory.update(

@@ -15,20 +15,27 @@
  */
 package com.android.quickstep.util;
 
+import static android.app.WindowConfiguration.ACTIVITY_TYPE_STANDARD;
+import static android.app.WindowConfiguration.WINDOWING_MODE_FULLSCREEN;
+
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import android.app.ActivityManager.RunningTaskInfo;
 import android.content.Context;
 import android.content.res.Configuration;
 import android.graphics.Point;
 import android.graphics.Rect;
 import android.graphics.RectF;
+import android.hardware.display.DisplayManager;
 import android.util.ArrayMap;
 import android.util.DisplayMetrics;
+import android.view.Display;
 import android.view.RemoteAnimationTarget;
 import android.view.Surface;
+import android.view.SurfaceControl;
 
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.filters.SmallTest;
@@ -126,6 +133,15 @@ public class TaskViewSimulatorTest {
                 .verifyNoTransforms();
     }
 
+    @Test
+    public void launchToGesture_portrait_preservesVisibleCardAndTopContent() {
+        new TaskMatrixVerifier()
+                .withLauncherSize(1200, 2450)
+                .withDensityDpi(420)
+                .withInsets(new Rect(0, 80, 0, 120))
+                .verifyTopAnchoredLaunchHandoff();
+    }
+
     private class TaskMatrixVerifier extends TransformParams {
 
         private Point mDisplaySize = new Point();
@@ -138,6 +154,7 @@ public class TaskViewSimulatorTest {
 
         private int mAppRotation = -1;
         private DeviceProfile mDeviceProfile;
+        private RectF mExpectedVisibleBounds;
 
         TaskMatrixVerifier withLauncherSize(int width, int height) {
             mDisplaySize.set(width, height);
@@ -166,6 +183,52 @@ public class TaskViewSimulatorTest {
         }
 
         void verifyNoTransforms() {
+            TaskViewSimulator tvs = createSimulator();
+            tvs.fullScreenProgress.value = 1;
+            tvs.recentsViewScale.value = tvs.getFullScreenScale();
+            tvs.apply(this);
+        }
+
+        void verifyTopAnchoredLaunchHandoff() {
+            final TaskViewSimulator tvs = createSimulator();
+            final RunningTaskInfo taskInfo = new RunningTaskInfo();
+            taskInfo.taskId = 42;
+            taskInfo.configuration.windowConfiguration.setActivityType(ACTIVITY_TYPE_STANDARD);
+            taskInfo.configuration.windowConfiguration.setWindowingMode(WINDOWING_MODE_FULLSCREEN);
+            final RemoteAnimationTarget target = new RemoteAnimationTarget(taskInfo.taskId,
+                    RemoteAnimationTarget.MODE_OPENING, new SurfaceControl(), false,
+                    new Rect(), mAppInsets, 0, new Point(), mAppBounds, mAppBounds,
+                    taskInfo.configuration.windowConfiguration, false, null, mAppBounds,
+                    taskInfo, false);
+            tvs.setPreview(target, null);
+            tvs.fullScreenProgress.value = 1;
+            tvs.recentsViewScale.value = tvs.getFullScreenScale();
+
+            final RectF launchCard = new RectF(280, 600, 920, 1400);
+            final AppWindowAnimationState.Session opening =
+                    AppWindowAnimationState.beginOpening(target, mDeviceProfile);
+            try {
+                opening.record(launchCard, .4f /* openness */, 24f /* cornerRadius */,
+                        0f /* verticalCropAnchor */);
+                final AppWindowAnimationState.GestureHandoff handoff =
+                        AppWindowAnimationState.takeForGesture(taskInfo.taskId);
+                Assert.assertNotNull(handoff);
+                tvs.setGestureHandoff(handoff);
+                mExpectedVisibleBounds = new RectF(launchCard);
+                tvs.apply(this);
+
+                // Taking over a partially opened app must keep its displayed card, then move
+                // with the finger without restoring a centered crop that clips the app title.
+                tvs.recentsViewSecondaryTranslation.value = -120f;
+                mExpectedVisibleBounds.offset(0, -120f);
+                tvs.apply(this);
+            } finally {
+                opening.finish();
+                target.leash.release();
+            }
+        }
+
+        private TaskViewSimulator createSimulator() {
             DisplayController mockController = mock(DisplayController.class);
 
             app.initDaggerComponent(
@@ -199,7 +262,13 @@ public class TaskViewSimulatorTest {
 
             Configuration configuration = new Configuration();
             configuration.densityDpi = mDensityDpi;
-            Context configurationContext = app.createConfigurationContext(configuration);
+            DisplayManager displayManager = app.getSystemService(DisplayManager.class);
+            Assert.assertNotNull(displayManager);
+            Display display = displayManager.getDisplay(Display.DEFAULT_DISPLAY);
+            Assert.assertNotNull(display);
+            Context configurationContext = app.createDisplayContext(display)
+                    .createConfigurationContext(configuration);
+            Assert.assertSame(app, configurationContext.getApplicationContext());
 
             DisplayController.Info info = new Info(
                     configurationContext, false, wmProxy, perDisplayBoundsCache, mDensityDpi);
@@ -209,7 +278,7 @@ public class TaskViewSimulatorTest {
                     .getBestMatch(mAppBounds.width(), mAppBounds.height(), rotation);
             mDeviceProfile.updateInsets(mLauncherInsets);
 
-            TaskViewSimulator tvs = new TaskViewSimulator(app,
+            TaskViewSimulator tvs = new TaskViewSimulator(configurationContext,
                     FallbackActivityInterface.INSTANCE, false, 0);
             tvs.setDp(mDeviceProfile);
 
@@ -223,10 +292,7 @@ public class TaskViewSimulatorTest {
                 mAppInsets = new Rect(mLauncherInsets);
             }
             tvs.setPreviewBounds(mAppBounds, mAppInsets);
-
-            tvs.fullScreenProgress.value = 1;
-            tvs.recentsViewScale.value = tvs.getFullScreenScale();
-            tvs.apply(this);
+            return tvs;
         }
 
         @Override
@@ -241,6 +307,20 @@ public class TaskViewSimulatorTest {
         public void applySurfaceParams(SurfaceTransaction params) {
             Assert.assertTrue(params instanceof RecordingSurfaceTransaction);
             MockProperties p = ((RecordingSurfaceTransaction) params).mockProperties;
+
+            if (mExpectedVisibleBounds != null) {
+                RectF visibleBounds = new RectF(p.windowCrop);
+                p.matrix.mapRect(visibleBounds);
+                Assert.assertEquals(mExpectedVisibleBounds.left, visibleBounds.left, 1f);
+                Assert.assertEquals(mExpectedVisibleBounds.top, visibleBounds.top, 1f);
+                Assert.assertEquals(mExpectedVisibleBounds.right, visibleBounds.right, 1f);
+                Assert.assertEquals(mExpectedVisibleBounds.bottom, visibleBounds.bottom, 1f);
+                Assert.assertEquals(0, p.windowCrop.top);
+                float[] titlePoint = { mAppBounds.exactCenterX(), mAppInsets.top + 40f };
+                p.matrix.mapPoints(titlePoint);
+                Assert.assertTrue(mExpectedVisibleBounds.contains(titlePoint[0], titlePoint[1]));
+                return;
+            }
 
             // Verify that the task position remains the same
             RectF newAppBounds = new RectF(mAppBounds);

@@ -93,9 +93,12 @@ public class TaskViewSimulator implements TransformParams.BuilderProxy {
     private final Matrix mMatrix = new Matrix();
     private final Matrix mMatrixTmp = new Matrix();
     private float mBaseMatrixRotation;
+    private float mVerticalCropAnchor = Float.NaN;
 
     /** Buffer/display rotation, before adding any app-plane animation. */
     public float getBaseMatrixRotation() { return mBaseMatrixRotation; }
+
+    public float getCurrentVerticalCropAnchor() { return mVerticalCropAnchor; }
 
     // Thumbnail view properties
     private final Rect mThumbnailPosition = new Rect();
@@ -741,6 +744,7 @@ public class TaskViewSimulator implements TransformParams.BuilderProxy {
         }
 
         mBaseMatrixRotation = LandscapeAppAnimation.getMatrixRotation(mMatrix, mCurrentValues);
+        mVerticalCropAnchor = Float.NaN;
         mGestureCornerRadius = -1f;
         if (mGestureSeed != null && (fullScreenProgress > 0f || mRelativeGesture)) {
             mSeedRect.set(mGestureSeed.rect);
@@ -792,6 +796,17 @@ public class TaskViewSimulator implements TransformParams.BuilderProxy {
             LandscapeAppAnimation.applyClosingTransform(mMatrix, mGestureSource, mGestureRect,
                     baseRotation, mGestureSeedRotation * p, 1f, mTmpCropRect, mGestureMotion,
                     baseRotation);
+            if (Float.isFinite(mGestureSeed.verticalCropAnchor) && mPreviewTarget != null
+                    && baseRotation == 0f
+                    && mGestureSeedRotation == 0f && mPreviewTarget.rotationChange == 0
+                    && mThumbnailPosition.height() > mThumbnailPosition.width()) {
+                float baseAnchor = AppWindowAnimationState.getVerticalCropAnchor(mTmpCropRect.top,
+                        mTmpCropRect.height(), mThumbnailPosition.height(), .5f);
+                mVerticalCropAnchor = Utilities.mapRange(p, baseAnchor,
+                        mGestureSeed.verticalCropAnchor);
+                AppWindowAnimationState.applyVerticalCropAnchor(mMatrix, mTmpCropRect,
+                        mThumbnailPosition.height(), mVerticalCropAnchor);
+            }
             float scale = mMatrix.mapRadius(1f);
             mGestureCornerRadius = Math.min(Utilities.mapRange(p, radius,
                             seedRadius / Math.max(0.001f, scale)),

@@ -147,13 +147,19 @@ public final class WindowAnimationSnapshot extends Drawable
     /** The matrix and crop use the same app coordinates as the live surface transaction. */
     public void update(Matrix appToHome, Rect crop, float cornerRadius, float alpha,
             RectF homeRect, float openness, float homeCornerRadius) {
+        update(appToHome, crop, cornerRadius, alpha, homeRect, openness, homeCornerRadius,
+                Float.NaN);
+    }
+
+    public void update(Matrix appToHome, Rect crop, float cornerRadius, float alpha,
+            RectF homeRect, float openness, float homeCornerRadius, float verticalCropAnchor) {
         if (!isContinuing()) return;
         mMatrix.set(appToHome);
         mClip.rewind();
         mClip.addRoundRect(crop.left, crop.top, crop.right, crop.bottom,
                 cornerRadius, cornerRadius, Path.Direction.CW);
         mPaint.setAlpha(Math.round(255f * LandscapeAppAnimation.boundProgress(alpha)));
-        mSession.record(homeRect, openness, homeCornerRadius);
+        mSession.record(homeRect, openness, homeCornerRadius, verticalCropAnchor);
         invalidateSelf();
     }
 

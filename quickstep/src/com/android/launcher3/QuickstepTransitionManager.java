@@ -878,6 +878,22 @@ public class QuickstepTransitionManager implements OnDeviceProfileChangeListener
                         && !cropToInset && rotationChange == 0
                         && target.windowConfiguration.getWindowingMode()
                                 == android.app.WindowConfiguration.WINDOWING_MODE_FULLSCREEN);
+        final boolean hasFollowingStatusBar =
+                SystemBarFollowAnimation.getSurface(openingTargets, target) != null;
+        final boolean hasPreviousCropAnchor = previous != null
+                && Float.isFinite(previous.verticalCropAnchor);
+        // A quick reopen can arrive before WM releases the old bar owner. Preserve its source
+        // slice even when that new transition cannot borrow the original status bar yet.
+        final boolean anchorStatusBar = directGeometry && !cropToInset
+                && openingTargets.apps.length == 1 && !appTargetsAreTranslucent
+                && target != null && target.windowConfiguration.getWindowingMode()
+                        == android.app.WindowConfiguration.WINDOWING_MODE_FULLSCREEN
+                && rotationChange == 0
+                && landscapeRotation == 0f && fullWindowCrop.height() > fullWindowCrop.width()
+                && (hasFollowingStatusBar || hasPreviousCropAnchor);
+        final float startCropAnchor = previous == null ? 0f
+                : Float.isFinite(previous.verticalCropAnchor) ? previous.verticalCropAnchor : .5f;
+        final float endCropAnchor = hasFollowingStatusBar ? 0f : startCropAnchor;
         final WindowMotion openX = new WindowMotion(openingStartRect.centerX(),
                 openingEndRect.centerX(), previous == null ? Float.NaN : previous.velocity.x,
                 motion.openDuration, motion.interpolator,
@@ -1154,6 +1170,8 @@ public class QuickstepTransitionManager implements OnDeviceProfileChangeListener
                 floatingIconBounds.bottom += offsetY;
 
                 final float expansion = openingInterpolator.getInterpolation(percent);
+                final float verticalCropAnchor = anchorStatusBar
+                        ? Utilities.mapRange(expansion, startCropAnchor, endCropAnchor) : Float.NaN;
                 float openness = Utilities.mapRange(expansion,
                         previous == null ? 0f : previous.openness, 1f);
                 float windowRadius = mWindowRadius.value;
@@ -1190,6 +1208,12 @@ public class QuickstepTransitionManager implements OnDeviceProfileChangeListener
                             Math.round(fullWindowCrop.exactCenterY() - halfHeight),
                             Math.round(fullWindowCrop.exactCenterX() + halfWidth),
                             Math.round(fullWindowCrop.exactCenterY() + halfHeight));
+                    if (anchorStatusBar) {
+                        // Preserve the app's existing top inset. A resumed centered slice
+                        // reaches the top smoothly instead of changing contents on its first frame.
+                        crop.offset(0, Math.round(Math.max(0, fullWindowCrop.height() - crop.height())
+                                * verticalCropAnchor) - crop.top);
+                    }
                     // A physical display can have square corners while the floating app
                     // still needs card corners. Flatten only as it reaches the screen edges.
                     float remainingInset = Math.max(
@@ -1211,7 +1235,8 @@ public class QuickstepTransitionManager implements OnDeviceProfileChangeListener
                 if (!drawSnapshot) {
                     mLauncher.getDepthController().setAppTransitionProgress(appAnimator,
                             percent);
-                    motionState.record(floatingIconBounds, openness, windowRadius * scale);
+                    motionState.record(floatingIconBounds, openness, windowRadius * scale,
+                            verticalCropAnchor);
                 }
 
                 for (int i = appTargets.length - 1; i >= 0; i--) {
@@ -1263,7 +1288,7 @@ public class QuickstepTransitionManager implements OnDeviceProfileChangeListener
                             snapshotMatrix.setConcat(windowToHome, matrix);
                             snapshot.update(snapshotMatrix, crop, windowRadius,
                                     1f - mIconAlpha.value, floatingIconBounds, openness,
-                                    windowRadius * scale);
+                                    windowRadius * scale, verticalCropAnchor);
                         } else {
                             floatingView.update(initOnly && previous == null ? 1f : mIconAlpha.value,
                                     floatingIconBounds, percent, 0f,
@@ -2644,6 +2669,7 @@ public class QuickstepTransitionManager implements OnDeviceProfileChangeListener
         private final Rect mWindowStartBounds = new Rect();
         private final Rect mWindowOriginalBounds = new Rect();
         private final float mLandscapeRotation;
+        private final float mVerticalCropAnchor;
         private final DesktopAnimationSettings mMotion;
         private final AppWindowAnimationState.Session mMotionState;
         private final float mStartOpenness;
@@ -2708,6 +2734,18 @@ public class QuickstepTransitionManager implements OnDeviceProfileChangeListener
                 }
             }
             mSnapshotTarget = closingTarget;
+            final float previousCropAnchor = motionState.previous == null ? Float.NaN
+                    : motionState.previous.verticalCropAnchor;
+            mVerticalCropAnchor = useMotion && closingTarget != null
+                    && !closingTarget.isTranslucent
+                    && closingTarget.windowConfiguration.getWindowingMode()
+                            == android.app.WindowConfiguration.WINDOWING_MODE_FULLSCREEN
+                    && closingTarget.rotationChange == 0 && landscapeRotation == 0f
+                    && mWindowOriginalBounds.height() > mWindowOriginalBounds.width()
+                    && (SystemBarFollowAnimation.getSurface(mTargets, closingTarget) != null
+                            || Float.isFinite(previousCropAnchor))
+                    ? (Float.isFinite(previousCropAnchor) ? previousCropAnchor : 0f)
+                    : Float.NaN;
             if (useMotion && closingTarget != null && closingTarget.taskId >= 0
                     && !closingTarget.isTranslucent) {
                 int homeRotation = mDeviceProfile.getDeviceProperties().getRotationHint();
@@ -2751,7 +2789,8 @@ public class QuickstepTransitionManager implements OnDeviceProfileChangeListener
             final float landscapeProgress = LandscapeAppAnimation.boundProgress(progress);
             final float closeProgress = 1f - mStartOpenness * (1f - landscapeProgress);
             if (!snapshotOnly) {
-                mMotionState.record(currentRectF, 1f - closeProgress, getCornerRadius(progress));
+                mMotionState.record(currentRectF, 1f - closeProgress, getCornerRadius(progress),
+                        mVerticalCropAnchor);
                 mLauncher.getDepthController().setAppTransitionProgress(this,
                         mWindowAnimation.getTimelineProgress());
             }
@@ -2804,12 +2843,15 @@ public class QuickstepTransitionManager implements OnDeviceProfileChangeListener
                                         * mMotion.rotationProgress(closeProgress),
                                 mCurrentRectF.centerX(), mCurrentRectF.centerY());
                     }
+                    AppWindowAnimationState.applyVerticalCropAnchor(mMatrix, mTmpRect,
+                            mWindowOriginalBounds.height(), mVerticalCropAnchor);
 
                     if (snapshotOnly) {
                         mSnapshotMatrix.setConcat(mWindowToHome, mMatrix);
                         mSnapshot.update(mSnapshotMatrix, mTmpRect,
                                 getCornerRadius(progress) / scale, getWindowAlpha(closeProgress),
-                                currentRectF, 1f - closeProgress, getCornerRadius(progress));
+                                currentRectF, 1f - closeProgress, getCornerRadius(progress),
+                                mVerticalCropAnchor);
                     } else {
                         builder.setMatrix(mMatrix)
                                 .setWindowCrop(mTmpRect)

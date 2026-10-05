@@ -10,6 +10,7 @@ import static android.app.WindowConfiguration.WINDOWING_MODE_FULLSCREEN;
 import android.app.ActivityManager.RunningTaskInfo;
 import android.graphics.Matrix;
 import android.graphics.PointF;
+import android.graphics.Rect;
 import android.graphics.RectF;
 import android.os.SystemClock;
 import android.util.SparseArray;
@@ -35,6 +36,8 @@ public final class AppWindowAnimationState {
         public float openness;
         public float cornerRadius;
         public float appRotation = Float.NaN;
+        // Position within the vertical crop slack: 0 keeps the app's top inset visible.
+        public float verticalCropAnchor = Float.NaN;
         private long time;
 
         Pose() { }
@@ -46,6 +49,7 @@ public final class AppWindowAnimationState {
             openness = other.openness;
             cornerRadius = other.cornerRadius;
             appRotation = other.appRotation;
+            verticalCropAnchor = other.verticalCropAnchor;
             time = other.time;
         }
     }
@@ -122,7 +126,9 @@ public final class AppWindowAnimationState {
             mWindowToHome.invert(mWindowToHome);
             mWindowToHome.mapRect(mCurrentRect);
             if (mCurrentRect.isEmpty()) return;
-            if (mCurrentRect.equals(mPose.rect) && rotation == mPose.appRotation) return;
+            final float cropAnchor = simulator.getCurrentVerticalCropAnchor();
+            if (mCurrentRect.equals(mPose.rect) && rotation == mPose.appRotation
+                    && Float.compare(cropAnchor, mPose.verticalCropAnchor) == 0) return;
             long now = SystemClock.uptimeMillis();
             long dt = now - mPose.time;
             if (dt > 0 && dt < 100) {
@@ -138,6 +144,7 @@ public final class AppWindowAnimationState {
             mPose.cornerRadius = simulator.getCurrentCornerRadius()
                     * mCurrentMatrix.mapRadius(1f);
             mPose.appRotation = rotation;
+            mPose.verticalCropAnchor = cropAnchor;
             mPose.time = now;
             if (mSource.mGestureOwner == this && sSessions.get(mTaskId) == mSource) {
                 mSource.copyPose(mPose);
@@ -228,6 +235,7 @@ public final class AppWindowAnimationState {
             mPose.openness = pose.openness;
             mPose.cornerRadius = pose.cornerRadius;
             mPose.appRotation = pose.appRotation;
+            mPose.verticalCropAnchor = pose.verticalCropAnchor;
             mPose.time = pose.time;
         }
 
@@ -237,6 +245,11 @@ public final class AppWindowAnimationState {
         }
 
         public void record(RectF rect, float openness, float cornerRadius) {
+            record(rect, openness, cornerRadius, Float.NaN);
+        }
+
+        public void record(RectF rect, float openness, float cornerRadius,
+                float verticalCropAnchor) {
             if (!isActive() || rect.isEmpty()) return;
             long now = SystemClock.uptimeMillis();
             long dt = now - mPose.time;
@@ -254,6 +267,7 @@ public final class AppWindowAnimationState {
             mPose.openness = LandscapeAppAnimation.boundProgress(openness);
             mPose.cornerRadius = cornerRadius;
             mPose.appRotation = Float.NaN;
+            mPose.verticalCropAnchor = verticalCropAnchor;
             mPose.time = now;
         }
 
@@ -387,6 +401,22 @@ public final class AppWindowAnimationState {
                 && !owner.mPose.rect.isEmpty()
                 && SystemClock.uptimeMillis() - owner.mPose.time < 250
                 ? new Pose(owner.mPose) : null;
+    }
+
+    public static float getVerticalCropAnchor(float top, float cropHeight, float sourceHeight,
+            float fallback) {
+        float slack = sourceHeight - cropHeight;
+        return slack <= 1f ? fallback : Math.max(0f, Math.min(1f, top / slack));
+    }
+
+    /** Move the source slice while retaining the same mapped card rectangle. */
+    public static void applyVerticalCropAnchor(Matrix matrix, Rect crop, float sourceHeight,
+            float anchor) {
+        if (!Float.isFinite(anchor)) return;
+        int top = Math.round(Math.max(0f, sourceHeight - crop.height()) * anchor);
+        int offset = top - crop.top;
+        crop.offset(0, offset);
+        matrix.preTranslate(0f, -offset);
     }
 
     private AppWindowAnimationState() { }
