@@ -190,7 +190,7 @@ public class LoaderCursor extends CursorWrapper {
             container = getInt(mContainerIndex);
             id = getInt(mIdIndex);
             serialNumber = getInt(mProfileIdIndex);
-            user = mUserManagerState.getUser(serialNumber);
+            user = mUserManagerState.getUserOrNull(serialNumber);
             restoreFlag = getInt(mRestoredIndex);
         }
         return result;

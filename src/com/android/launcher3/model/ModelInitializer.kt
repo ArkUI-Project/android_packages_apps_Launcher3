@@ -121,7 +121,15 @@ constructor(
         }
 
         // User changes
-        lifeCycle.addCloseable(userCache.addUserEventListener(model::onUserEvent))
+        lifeCycle.addCloseable(userCache.addUserEventListener { user, action ->
+            model.onUserEvent(user, action)
+            if (action == "android.intent.action.USER_INFO_CHANGED") {
+                // The shared event updates both workspace labels and cached recent-task labels.
+                launcherApps.getActivityList(null, user)
+                    .map { it.componentName.packageName }.distinct()
+                    .forEach { iconChangeTracker.notifyIconChanged(it, user) }
+            }
+        })
 
         // Private space settings changes
         val psSettingsListener = SettingsCache.OnChangeListener { model.forceReload() }

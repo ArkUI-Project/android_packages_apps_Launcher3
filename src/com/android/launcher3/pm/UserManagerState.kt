@@ -34,7 +34,10 @@ class UserManagerState(private val userMap: Map<UserHandle, CachedUserInfo>) {
 
     /** Returns the [UserHandle] corresponding to the [serialNo] */
     fun getUser(serialNo: Long): UserHandle =
-        userSerialMap[serialNo]?.iconInfo?.user ?: Process.myUserHandle()
+        getUserOrNull(serialNo) ?: Process.myUserHandle()
+
+    /** Persisted workspace items must not become main-user items when their profile is removed. */
+    fun getUserOrNull(serialNo: Long): UserHandle? = userSerialMap[serialNo]?.iconInfo?.user
 
     /** Returns the user locked state */
     fun isUserUnlocked(user: UserHandle) = userMap[user]?.isUnlocked ?: true

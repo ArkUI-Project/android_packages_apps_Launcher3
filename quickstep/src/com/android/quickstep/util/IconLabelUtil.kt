@@ -18,11 +18,31 @@ package com.android.quickstep.util
 
 import android.app.ActivityManager
 import android.content.Context
+import android.content.Intent
 import android.content.pm.ActivityInfo
+import android.content.pm.LauncherApps
 import android.os.UserHandle
 import com.android.launcher3.Utilities
 
 object IconLabelUtil {
+    private fun appTwinLabel(context: Context, info: ActivityInfo, userId: Int): String? {
+        if (!Utilities.ATLEAST_V || userId == UserHandle.myUserId()) return null
+        val user = UserHandle.of(userId)
+        val launcher = context.getSystemService(LauncherApps::class.java) ?: return null
+        return try {
+            if (launcher.getLauncherUserInfo(user)?.userType !=
+                "org.arkui.usertype.profile.APP_TWIN") return null
+            launcher.resolveActivity(Intent().setComponent(info.componentName), user)?.label?.toString()
+        } catch (_: RuntimeException) {
+            // A profile can disappear while its recent-task icon is being loaded.
+            null
+        }
+    }
+
+    @JvmStatic
+    fun getActivityLabel(context: Context, info: ActivityInfo, userId: Int): String =
+        appTwinLabel(context, info, userId) ?: Utilities.trim(info.loadLabel(context.packageManager))
+
     @JvmStatic
     @JvmOverloads
     fun getBadgedContentDescription(
@@ -31,6 +51,7 @@ object IconLabelUtil {
         userId: Int,
         taskDescription: ActivityManager.TaskDescription? = null,
     ): String {
+        appTwinLabel(context, info, userId)?.let { return it }
         val packageManager = context.packageManager
         var taskLabel = taskDescription?.let { Utilities.trim(it.label) }
         if (taskLabel.isNullOrEmpty()) {

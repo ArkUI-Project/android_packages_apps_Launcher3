@@ -75,6 +75,7 @@ constructor(@ApplicationContext private val context: Context, tracker: DaggerSin
                 ACTION_PROFILE_LOCKED,
                 ACTION_PROFILE_AVAILABLE,
                 ACTION_PROFILE_UNAVAILABLE,
+                "android.intent.action.USER_INFO_CHANGED",
             )
         ) {
             rebuildUserCache()
@@ -87,7 +88,9 @@ constructor(@ApplicationContext private val context: Context, tracker: DaggerSin
     private fun onUsersChanged(intent: Intent) {
         if (closed) return
         rebuildUserCache()
-        val user = intent.getParcelableExtra<UserHandle>(Intent.EXTRA_USER) ?: return
+        val user = intent.getParcelableExtra<UserHandle>(Intent.EXTRA_USER)
+            ?: intent.getIntExtra("android.intent.extra.user_handle", -1)
+                .takeIf { it >= 0 }?.let { UserHandle.of(it) } ?: return
         val action = intent.action ?: return
         userEventListeners.forEach { it.accept(user, action) }
     }
@@ -131,6 +134,7 @@ constructor(@ApplicationContext private val context: Context, tracker: DaggerSin
                                 null -> UserIconInfo.TYPE_MAIN
                                 USER_TYPE_PROFILE_MANAGED -> UserIconInfo.TYPE_WORK
                                 USER_TYPE_PROFILE_CLONE -> UserIconInfo.TYPE_CLONED
+                                "org.arkui.usertype.profile.APP_TWIN" -> UserIconInfo.TYPE_CLONED
                                 USER_TYPE_PROFILE_PRIVATE -> UserIconInfo.TYPE_PRIVATE
                                 else -> UserIconInfo.TYPE_MAIN
                             },

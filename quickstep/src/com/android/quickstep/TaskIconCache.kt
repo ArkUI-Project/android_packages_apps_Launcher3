@@ -43,6 +43,7 @@ import com.android.launcher3.util.Preconditions
 import com.android.launcher3.util.coroutines.DispatcherProvider
 import com.android.quickstep.task.thumbnail.data.TaskIconDataSource
 import com.android.quickstep.util.IconLabelUtil.getBadgedContentDescription
+import com.android.quickstep.util.IconLabelUtil.getActivityLabel
 import com.android.quickstep.util.TaskKeyLruCache
 import com.android.quickstep.util.TaskVisualsChangeListener
 import com.android.systemui.shared.recents.model.Task
@@ -268,7 +269,7 @@ class TaskIconCache(
                         task.key.userId,
                         task.taskDescription,
                     ),
-                    Utilities.trim(activityInfo.loadLabel(context.packageManager)),
+                    getActivityLabel(context, activityInfo, key.userId),
                 )
             else ->
                 TaskCacheEntry(
@@ -302,7 +303,7 @@ class TaskIconCache(
                         task.key.userId,
                         task.taskDescription,
                     ),
-                    Utilities.trim(activityInfo.loadLabel(context.packageManager)),
+                    getActivityLabel(context, activityInfo, key.userId),
                 )
             else ->
                 TaskBitmapInfoCacheEntry(
