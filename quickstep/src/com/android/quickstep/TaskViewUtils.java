@@ -848,6 +848,10 @@ public final class TaskViewUtils {
         // For convenience, we also keep a pointer to all the divider + dim layer leashes together.
         List<SurfaceControl> auxiliarySurfaces = new ArrayList<>();
         for (RemoteAnimationTarget target : nonApps) {
+            if (target.windowType != TYPE_DOCK_DIVIDER
+                    && target.windowType != TYPE_SPLIT_SCREEN_DIM_LAYER) {
+                continue;
+            }
             final SurfaceControl leash = target.leash;
             if (leash != null && leash.isValid()) {
                 if (target.windowType == TYPE_DOCK_DIVIDER) {
