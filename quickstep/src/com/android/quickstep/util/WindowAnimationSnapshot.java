@@ -57,6 +57,11 @@ public final class WindowAnimationSnapshot extends Drawable
 
     public WindowAnimationSnapshot(View host, SurfaceControl leash, Rect captureBounds,
             AppWindowAnimationState.Session session) {
+        this(host, leash, captureBounds, session, null);
+    }
+
+    public WindowAnimationSnapshot(View host, SurfaceControl leash, Rect captureBounds,
+            AppWindowAnimationState.Session session, @Nullable SurfaceControl liveStatusBar) {
         mHost = host;
         mHostWidth = host.getWidth();
         mHostHeight = host.getHeight();
@@ -87,7 +92,11 @@ public final class WindowAnimationSnapshot extends Drawable
         try {
             int status = ScreenCaptureInternal.captureLayers(
                     new ScreenCaptureInternal.LayerCaptureArgs.Builder(leash)
-                            .setSourceCrop(mCaptureBounds).setFrameScale(scale).build(),
+                            .setSourceCrop(mCaptureBounds).setFrameScale(scale)
+                            // The original bar returns to its display parent during handoff.
+                            // A bitmap continuation must never retain a copied set of glyphs.
+                            .setExcludeLayers(liveStatusBar == null ? null
+                                    : new SurfaceControl[] {liveStatusBar}).build(),
                     mCaptureListener);
             if (status != 0) close();
         } catch (IllegalArgumentException | SecurityException e) {

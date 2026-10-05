@@ -20,6 +20,7 @@ import static android.app.WindowConfiguration.ACTIVITY_TYPE_HOME;
 import static android.view.RemoteAnimationTarget.MODE_CLOSING;
 import static android.view.RemoteAnimationTarget.MODE_OPENING;
 import static android.view.WindowManager.LayoutParams.TYPE_DOCK_DIVIDER;
+import static android.view.WindowManager.LayoutParams.TYPE_STATUS_BAR;
 
 import static com.android.launcher3.util.Executors.MAIN_EXECUTOR;
 import static com.android.wm.shell.shared.TransitionUtil.TYPE_SPLIT_SCREEN_DIM_LAYER;
@@ -110,7 +111,7 @@ public class RecentsAnimationCallbacks implements
             Bundle extras,
             @Nullable TransitionInfo transitionInfo) {
         long appCount = Arrays.stream(appTargets)
-                .filter(app -> app.mode == MODE_CLOSING)
+                .filter(app -> app.mode == MODE_CLOSING && app.windowType != TYPE_STATUS_BAR)
                 .count();
 
         boolean isOpeningHome = Arrays.stream(appTargets).filter(app -> app.mode == MODE_OPENING
@@ -202,7 +203,8 @@ public class RecentsAnimationCallbacks implements
         for (int i = 0; i < appTargets.length; i++) {
             RemoteAnimationTarget target = appTargets[i];
             if (target.windowType == TYPE_DOCK_DIVIDER
-                    || target.windowType == TYPE_SPLIT_SCREEN_DIM_LAYER) {
+                    || target.windowType == TYPE_SPLIT_SCREEN_DIM_LAYER
+                    || target.windowType == TYPE_STATUS_BAR) {
                 nonApps.add(target);
             } else {
                 apps.add(target);

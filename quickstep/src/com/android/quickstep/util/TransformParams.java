@@ -167,7 +167,8 @@ public class TransformParams {
         }
         for (int i = 0; i < targets.unfilteredApps.length; i++) {
             RemoteAnimationTarget app = targets.unfilteredApps[i];
-            SurfaceProperties builder = transaction.forSurface(app.leash);
+            SurfaceProperties builder =
+                    SystemBarFollowAnimation.forTarget(transaction, targets, app);
             BuilderProxy targetProxy =
                     app.windowConfiguration.getActivityType() == ACTIVITY_TYPE_HOME
                             ? mHomeBuilderProxy
