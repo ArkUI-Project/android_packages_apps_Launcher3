@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2019 The LineageOS Project
+ * Copyright (C) 2026 The ArkUI Project (authenticated change persistence)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -102,6 +103,8 @@ class TrustAppsAdapter extends RecyclerView.Adapter<TrustAppsAdapter.ViewHolder>
 
             mHiddenView.setOnClickListener(v -> {
                 component.invertVisibility();
+                // Persist while the authenticated page is still active, before its animation.
+                mListener.onHiddenItemChanged(component);
 
                 mHiddenView.setImageResource(component.isHidden() ?
                         R.drawable.avd_hidden_lock : R.drawable.avd_hidden_unlock);
@@ -124,6 +127,7 @@ class TrustAppsAdapter extends RecyclerView.Adapter<TrustAppsAdapter.ViewHolder>
 
             mProtectedView.setOnClickListener(v -> {
                 component.invertProtection();
+                mListener.onProtectedItemChanged(component);
 
                 mProtectedView.setImageResource(component.isProtected() ?
                         R.drawable.avd_protected_lock : R.drawable.avd_protected_unlock);
@@ -146,16 +150,15 @@ class TrustAppsAdapter extends RecyclerView.Adapter<TrustAppsAdapter.ViewHolder>
         }
 
         private void updateHiddenList(int position, TrustComponent component) {
-            mListener.onHiddenItemChanged(component);
             updateList(position, component);
         }
 
         private void updateProtectedList(int position, TrustComponent component) {
-            mListener.onProtectedItemChanged(component);
             updateList(position, component);
         }
 
         private void updateList(int position, TrustComponent component) {
+            if (position == RecyclerView.NO_POSITION || position >= mList.size()) return;
             mList.set(position, component);
             notifyItemChanged(position);
         }

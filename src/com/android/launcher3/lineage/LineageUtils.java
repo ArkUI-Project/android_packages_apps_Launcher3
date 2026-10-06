@@ -4,17 +4,86 @@
 package com.android.launcher3.lineage;
 
 import android.app.KeyguardManager;
+import android.app.Activity;
+import android.content.Intent;
+import android.content.ActivityNotFoundException;
+import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageManager;
 import android.content.Context;
 import android.hardware.biometrics.BiometricManager.Authenticators;
 import android.hardware.biometrics.BiometricPrompt;
 import android.os.CancellationSignal;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.Parcel;
+import android.os.Binder;
+import android.os.Bundle;
+import android.os.ResultReceiver;
+import android.os.SystemClock;
 import android.widget.Toast;
 
 import com.android.launcher3.R;
 
+import java.util.concurrent.atomic.AtomicBoolean;
+
 public class LineageUtils {
+
+    /** Hidden-app management uses the independent privacy credential in trusted Settings UI. */
+    public static void showPrivacyPassword(Activity activity, Runnable success, Runnable cancel) {
+        Handler handler = new Handler(Looper.getMainLooper());
+        AtomicBoolean delivered = new AtomicBoolean();
+        long expires = SystemClock.elapsedRealtime() + 5 * 60_000L;
+        final int settingsUid;
+        try {
+            ApplicationInfo settings = activity.getPackageManager()
+                    .getApplicationInfo("com.android.settings", 0);
+            if ((settings.flags & ApplicationInfo.FLAG_SYSTEM) == 0
+                    || activity.getPackageManager().checkSignatures("android", "com.android.settings")
+                            != PackageManager.SIGNATURE_MATCH) {
+                cancel.run();
+                return;
+            }
+            settingsUid = settings.uid;
+        } catch (PackageManager.NameNotFoundException error) {
+            cancel.run();
+            return;
+        }
+        // With no Handler, onReceiveResult runs on the Binder thread while the sender identity
+        // is still available. Ordinary apps cannot forge Settings' authentication callback.
+        ResultReceiver receiver = new ResultReceiver(null) {
+            @Override protected void onReceiveResult(int resultCode, Bundle resultData) {
+                if (Binder.getCallingUid() != settingsUid
+                        || !delivered.compareAndSet(false, true)) return;
+                boolean verified = resultCode == Activity.RESULT_OK
+                        && SystemClock.elapsedRealtime() < expires;
+                handler.post(() -> {
+                    if (activity.isFinishing() || activity.isDestroyed()) return;
+                    if (verified) success.run();
+                    else cancel.run();
+                });
+            }
+        };
+        // Only the framework Parcelable class can cross into Settings' class loader. The
+        // local subclass remains behind its Binder, where the callback sender is validated.
+        final ResultReceiver callback;
+        Parcel parcel = Parcel.obtain();
+        try {
+            receiver.writeToParcel(parcel, 0);
+            parcel.setDataPosition(0);
+            callback = ResultReceiver.CREATOR.createFromParcel(parcel);
+        } finally {
+            parcel.recycle();
+        }
+        try {
+            activity.startActivity(new Intent("org.arkui.settings.CONFIRM_PRIVACY_PASSWORD")
+                    .setClassName("com.android.settings",
+                            "com.android.settings.arkui.privacy.PrivacyPasswordActivity")
+                    .putExtra("org.arkui.privacy.CALLBACK", callback));
+        } catch (ActivityNotFoundException error) {
+            Toast.makeText(activity, R.string.trust_apps_privacy_unavailable, Toast.LENGTH_LONG).show();
+            cancel.run();
+        }
+    }
 
     /**
      * Shows authentication screen to confirm credentials (pin, pattern or password) for the current

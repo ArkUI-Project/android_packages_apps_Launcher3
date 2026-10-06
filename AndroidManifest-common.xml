@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Modified by the ArkUI Project in 2026 to expose desktop preferences to system Settings. -->
+<!-- Modified by the ArkUI Project in 2026 for desktop settings and protected privacy access. -->
 <!--
 /*
 **
@@ -33,6 +33,7 @@
     -->
 
     <uses-permission android:name="android.permission.CALL_PHONE" />
+    <uses-permission android:name="android.permission.HIDE_OVERLAY_WINDOWS" />
     <uses-permission android:name="android.permission.SET_WALLPAPER" />
     <uses-permission android:name="android.permission.SET_WALLPAPER_HINTS" />
     <uses-permission android:name="android.permission.BIND_APPWIDGET" />

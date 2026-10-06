@@ -36,6 +36,7 @@
     <string name="trust_apps_no_lock_error">请设置一个安全锁定屏幕以限制应用访问</string>
     <string name="trust_apps_help">帮助</string>
     <string name="trust_apps_info_hidden">从抽屉中隐藏应用和其小部件</string>
+    <string name="trust_apps_privacy_unavailable">隐私密码暂不可用，隐藏应用仍受保护。</string>
     <string name="trust_apps_info_protected">需要经过认证才能从启动器打开受保护的应用</string>
     <string name="pref_suggestions_title">建议</string>
     <string name="pref_suggestions_summary">对于应用抽屉 &amp; 主屏幕的建议</string>

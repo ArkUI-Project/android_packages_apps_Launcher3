@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2019-2024 The LineageOS Project
+ * Copyright (C) 2026 The ArkUI Project (privacy-password access control)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,6 +28,7 @@ import android.view.Menu;
 import android.view.MenuInflater;
 import android.view.MenuItem;
 import android.view.View;
+import android.view.WindowManager;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.Toast;
@@ -64,10 +66,16 @@ public class TrustAppsActivity extends Activity implements
 
     private TrustDatabaseHelper mDbHelper;
     private TrustAppsAdapter mAdapter;
+    private boolean mAuthenticated;
+    private boolean mAuthenticationPending;
+    private boolean mResumed;
+    private boolean mInitialized;
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstance) {
         super.onCreate(savedInstance);
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
+        getWindow().setHideOverlayWindows(true);
 
         ActionBar actionBar = getActionBar();
         if (actionBar != null) {
@@ -80,16 +88,50 @@ public class TrustAppsActivity extends Activity implements
         mLoadingView = findViewById(R.id.hidden_apps_loading);
         mLoadingView.setVisibility(View.VISIBLE);
         mProgressBar = findViewById(R.id.hidden_apps_progress_bar);
+        mRecyclerView.setFilterTouchesWhenObscured(true);
+        mRecyclerView.setVisibility(View.GONE);
+    }
 
-        final boolean hasSecureKeyguard = LineageUtils.hasSecureKeyguard(this);
-        mAdapter = new TrustAppsAdapter(this, hasSecureKeyguard);
-        mDbHelper = TrustDatabaseHelper.getInstance(this);
+    @Override protected void onResume() {
+        super.onResume();
+        mResumed = true;
+        if (mAuthenticated) {
+            loadAuthenticatedContent();
+        } else if (!mAuthenticationPending) {
+            mAuthenticationPending = true;
+            LineageUtils.showPrivacyPassword(this, () -> {
+                mAuthenticationPending = false;
+                mAuthenticated = true;
+                if (mResumed) loadAuthenticatedContent();
+            }, this::finish);
+        }
+    }
 
-        mRecyclerView.setLayoutManager(new LinearLayoutManager(this));
-        mRecyclerView.setItemAnimator(new DefaultItemAnimator());
-        mRecyclerView.setAdapter(mAdapter);
+    @Override protected void onPause() {
+        mResumed = false;
+        mAuthenticated = false;
+        mRecyclerView.setVisibility(View.GONE);
+        mLoadingView.setVisibility(View.VISIBLE);
+        invalidateOptionsMenu();
+        super.onPause();
+    }
+
+    private void loadAuthenticatedContent() {
+        if (!mAuthenticated || !mResumed) return;
+        if (!mInitialized) {
+            mInitialized = true;
+
+            final boolean hasSecureKeyguard = LineageUtils.hasSecureKeyguard(this);
+            mAdapter = new TrustAppsAdapter(this, hasSecureKeyguard);
+            mDbHelper = TrustDatabaseHelper.getInstance(this);
+
+            mRecyclerView.setLayoutManager(new LinearLayoutManager(this));
+            mRecyclerView.setItemAnimator(new DefaultItemAnimator());
+            mRecyclerView.setAdapter(mAdapter);
+        }
 
         showOnBoarding(false);
+        invalidateOptionsMenu();
 
         final AppFilter appFilter = new AppFilter(this);
         new LoadTrustComponentsTask(mDbHelper, getPackageManager(), appFilter, this).execute();
@@ -97,6 +139,7 @@ public class TrustAppsActivity extends Activity implements
 
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {
+        if (!mAuthenticated) return false;
         MenuInflater menuInflater = getMenuInflater();
         menuInflater.inflate(R.menu.menu_trust_apps, menu);
         return super.onCreateOptionsMenu(menu);
@@ -118,11 +161,13 @@ public class TrustAppsActivity extends Activity implements
 
     @Override
     public void onHiddenItemChanged(@NonNull TrustComponent component) {
+        if (!mAuthenticated || !mResumed) return;
         new UpdateItemTask(mDbHelper, this, HIDDEN).execute(component);
     }
 
     @Override
     public void onProtectedItemChanged(@NonNull TrustComponent component) {
+        if (!mAuthenticated || !mResumed) return;
         new UpdateItemTask(mDbHelper, this, PROTECTED).execute(component);
     }
 
@@ -138,6 +183,7 @@ public class TrustAppsActivity extends Activity implements
 
     @Override
     public void onLoadCompleted(List<TrustComponent> result) {
+        if (!mAuthenticated || !mResumed) return;
         mLoadingView.setVisibility(View.GONE);
         mRecyclerView.setVisibility(View.VISIBLE);
         mAdapter.update(result);
