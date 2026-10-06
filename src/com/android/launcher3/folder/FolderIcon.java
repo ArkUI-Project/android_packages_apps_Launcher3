@@ -334,6 +334,18 @@ public class FolderIcon extends FrameLayout implements FloatingIconViewCompanion
         return mLargePreview != null && mLargePreview.getItemBounds(item, bounds);
     }
 
+    boolean getExpandedPreviewItemBounds(ItemInfo item, RectF bounds) {
+        if (mInfo.isPrivacyLocked()) return false;
+        if (usesLargePreview()) return getLargePreviewItemBounds(item, bounds);
+        for (int i = 0; i < mCurrentPreviewItems.size(); i++) {
+            if (mCurrentPreviewItems.get(i).id == item.id) {
+                getCompactItemBounds(i, bounds);
+                return true;
+            }
+        }
+        return false;
+    }
+
     public View findDirectAppTarget(Predicate<ItemInfo> matcher) {
         return mLargePreview == null ? null : mLargePreview.findDirectTarget(matcher);
     }

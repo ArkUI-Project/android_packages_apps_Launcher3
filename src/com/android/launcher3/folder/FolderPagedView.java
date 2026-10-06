@@ -24,6 +24,7 @@ import static com.android.launcher3.folder.FolderGridOrganizer.createFolderGridO
 import android.annotation.SuppressLint;
 import android.content.Context;
 import android.graphics.Canvas;
+import android.graphics.Color;
 import android.graphics.Path;
 import android.graphics.Point;
 import android.util.ArrayMap;
@@ -39,6 +40,7 @@ import com.android.launcher3.AbstractFloatingView;
 import com.android.launcher3.BubbleTextView;
 import com.android.launcher3.CellLayout;
 import com.android.launcher3.DeviceProfile;
+import com.android.launcher3.Launcher;
 import com.android.launcher3.PagedView;
 import com.android.launcher3.R;
 import com.android.launcher3.ShortcutAndWidgetContainer;
@@ -108,8 +110,16 @@ public class FolderPagedView extends PagedView<PageIndicatorDots> implements Cli
         this(
                 context,
                 attrs,
-                createFolderGridOrganizer(ActivityContext.lookupContext(context).getDeviceProfile())
+                createOrganizer(context)
         );
+    }
+
+    private static FolderGridOrganizer createOrganizer(Context context) {
+        ActivityContext activity = ActivityContext.lookupContext(context);
+        DeviceProfile profile = activity.getDeviceProfile();
+        return activity instanceof Launcher
+                ? new FolderGridOrganizer(3, profile.getFolderProfile().getNumRows(), true)
+                : createFolderGridOrganizer(profile);
     }
 
     public FolderPagedView(
@@ -261,6 +271,13 @@ public class FolderPagedView extends PagedView<PageIndicatorDots> implements Cli
         icon.setOnClickListener(mFolder.mActivityContext.getItemOnClickListener());
         icon.setOnLongClickListener(mFolder);
         icon.setOnFocusChangeListener(mFocusIndicatorHelper);
+        if (mFolder.usesFullScreenPresentation()) {
+            BubbleTextView label = icon instanceof BubbleTextView text ? text
+                    : ((AppPairIcon) icon).getTitleTextView();
+            label.setTextColor(Color.WHITE);
+            label.setShadowLayer(getResources().getDisplayMetrics().density, 0,
+                    getResources().getDisplayMetrics().density, 0x66000000);
+        }
 
         CellLayoutLayoutParams lp = (CellLayoutLayoutParams) icon.getLayoutParams();
         Point pos = mOrganizer.getPosForRank(item.rank);
@@ -307,7 +324,16 @@ public class FolderPagedView extends PagedView<PageIndicatorDots> implements Cli
         width -= (getPaddingLeft() + getPaddingRight());
         height -= (getPaddingTop() + getPaddingBottom());
         for (int i = getChildCount() - 1; i >= 0; i --) {
-            ((CellLayout) getChildAt(i)).setFixedSize(width, height);
+            CellLayout page = (CellLayout) getChildAt(i);
+            if (mFolder.usesFullScreenPresentation()) {
+                Point gap = mFolder.mActivityContext.getDeviceProfile()
+                        .getFolderProfile().getCellLayoutBorderSpacePx();
+                page.setCellDimensions(Math.max(1, (width - (mGridCountX - 1) * gap.x)
+                                / Math.max(1, mGridCountX)),
+                        Math.max(1, (height - (mGridCountY - 1) * gap.y)
+                                / Math.max(1, mGridCountY)));
+            }
+            page.setFixedSize(width, height);
         }
     }
 
@@ -393,7 +419,8 @@ public class FolderPagedView extends PagedView<PageIndicatorDots> implements Cli
             mFolder.onIndicatorVisibilityChanged();
         }
         // Set the gravity as LEFT or RIGHT instead of START, as START depends on the actual text.
-        int horizontalGravity = getPageCount() > 1
+        int horizontalGravity = mFolder.usesFullScreenPresentation()
+                ? (mIsRtl ? Gravity.RIGHT : Gravity.LEFT) : getPageCount() > 1
                 ? (mIsRtl ? Gravity.RIGHT : Gravity.LEFT) : Gravity.CENTER_HORIZONTAL;
         mFolder.getFolderName().setGravity(horizontalGravity | Gravity.CENTER_VERTICAL);
     }
@@ -407,6 +434,8 @@ public class FolderPagedView extends PagedView<PageIndicatorDots> implements Cli
         return  getPageCount() > 0 ?
                 (getPageAt(0).getDesiredHeight() + getPaddingTop() + getPaddingBottom()) : 0;
     }
+
+    int getGridRowCount() { return Math.max(1, mGridCountY); }
 
     /**
      * @return the rank of the cell nearest to the provided pixel position.

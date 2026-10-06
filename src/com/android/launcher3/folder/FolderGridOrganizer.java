@@ -37,6 +37,7 @@ public class FolderGridOrganizer {
     private final int mMaxCountX;
     private final int mMaxCountY;
     private final int mMaxItemsPerPage;
+    private final boolean mFixedColumns;
 
     private int mNumItemsInFolder;
     private int mCountX;
@@ -49,9 +50,18 @@ public class FolderGridOrganizer {
      * Note: must call {@link #setFolderInfo(FolderInfo)} manually for verifier to work.
      */
     public FolderGridOrganizer(int maxCountX, int maxCountY) {
+        this(maxCountX, maxCountY, false);
+    }
+
+    public FolderGridOrganizer(int maxCountX, int maxCountY, boolean fixedColumns) {
         mMaxCountX = maxCountX;
         mMaxCountY = maxCountY;
         mMaxItemsPerPage = mMaxCountX * mMaxCountY;
+        mFixedColumns = fixedColumns;
+        if (fixedColumns) {
+            mCountX = maxCountX;
+            mCountY = 1;
+        }
     }
 
     /**
@@ -102,6 +112,12 @@ public class FolderGridOrganizer {
      * maintaining the restrictions of {@link #mMaxCountX} &amp; {@link #mMaxCountY}.
      */
     private void calculateGridSize(int count) {
+        if (mFixedColumns) {
+            mCountX = mMaxCountX;
+            mCountY = Math.max(1, Math.min(mMaxCountY,
+                    (count + mMaxCountX - 1) / mMaxCountX));
+            return;
+        }
         boolean done;
         int gridCountX = mCountX;
         int gridCountY = mCountY;
