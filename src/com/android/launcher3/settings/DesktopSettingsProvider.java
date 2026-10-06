@@ -35,6 +35,7 @@ import java.util.concurrent.TimeoutException;
 public class DesktopSettingsProvider extends ContentProvider {
     private static final Map<String, Boolean> DEFAULTS = Map.ofEntries(
             Map.entry("pref_workspace_lock", false),
+            Map.entry("pref_standard_desktop", false),
             Map.entry("pref_add_icon_to_home", true),
             Map.entry("pref_allowRotation", false),
             Map.entry("pref_enable_minus_one", true),

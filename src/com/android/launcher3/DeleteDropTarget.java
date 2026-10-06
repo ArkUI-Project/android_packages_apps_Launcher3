@@ -32,6 +32,7 @@ import com.android.launcher3.model.data.CollectionInfo;
 import com.android.launcher3.model.data.ItemInfo;
 import com.android.launcher3.model.data.LauncherAppWidgetInfo;
 import com.android.launcher3.model.data.WorkspaceItemInfo;
+import com.android.launcher3.settings.DesktopMode;
 import com.android.launcher3.util.Preconditions;
 
 public class DeleteDropTarget extends ButtonDropTarget {
@@ -70,6 +71,7 @@ public class DeleteDropTarget extends ButtonDropTarget {
      * @return true for items that should have a "Remove" action in accessibility.
      */
     private boolean supportsAccessibilityDrop(ItemInfo info, View view) {
+        if (!DesktopMode.canRemove(getContext(), info)) return false;
         if (info instanceof WorkspaceItemInfo) {
             // Support the action unless the item is in a context menu.
             return canRemove(info);
@@ -97,7 +99,7 @@ public class DeleteDropTarget extends ButtonDropTarget {
 
     @Override
     protected boolean supportsDrop(ItemInfo info) {
-        return true;
+        return DesktopMode.canRemove(getContext(), info);
     }
 
     /**

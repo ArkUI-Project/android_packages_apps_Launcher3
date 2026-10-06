@@ -42,6 +42,7 @@ import com.android.launcher3.model.data.ItemInfo;
 import com.android.launcher3.model.data.ItemInfoWithIcon;
 import com.android.launcher3.model.data.WorkspaceItemInfo;
 import com.android.launcher3.pm.UserCache;
+import com.android.launcher3.settings.DesktopMode;
 import com.android.launcher3.util.ActivityOptionsWrapper;
 import com.android.launcher3.util.ApiWrapper;
 import com.android.launcher3.util.ComponentKey;
@@ -257,7 +258,9 @@ public abstract class SystemShortcut<T extends ActivityContext> extends ItemInfo
         }
     }
 
-    public static final Factory<ActivityContext> REMOVE = RemoveApp::new;
+    public static final Factory<ActivityContext> REMOVE = (activity, item, view) ->
+            DesktopMode.canRemove(view.getContext(), item)
+                    ? new RemoveApp<>(activity, item, view) : null;
 
     public static class RemoveApp<T extends ActivityContext> extends SystemShortcut<T> {
 

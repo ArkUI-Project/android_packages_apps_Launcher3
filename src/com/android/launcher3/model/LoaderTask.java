@@ -86,6 +86,9 @@ import com.android.launcher3.pm.PackageInstallInfo;
 import com.android.launcher3.pm.UserCache;
 import com.android.launcher3.pm.UserCache.CachedUserInfo;
 import com.android.launcher3.pm.UserManagerState;
+import com.android.launcher3.lineage.trust.HiddenAppsFilter;
+import com.android.launcher3.model.tasks.SyncStandardDesktopTask;
+import com.android.launcher3.settings.DesktopMode;
 import com.android.launcher3.provider.LauncherDbUtils;
 import com.android.launcher3.shortcuts.ShortcutKey;
 import com.android.launcher3.shortcuts.ShortcutRequest;
@@ -292,6 +295,14 @@ public class LoaderTask implements Runnable {
         }
 
         verifyNotStopped();
+        if (DesktopMode.isStandard(mContext) && Objects.equals(mIDP.dbFile, mDbName)) {
+            HiddenAppsFilter filter = new HiddenAppsFilter(mContext);
+            mModel.getWriter(false, com.android.launcher3.celllayout.CellPosMapper.DEFAULT, null)
+                    .deleteItemsFromDatabase(item -> item instanceof WorkspaceItemInfo
+                                    && item.getTargetComponent() != null
+                                    && !filter.shouldShowApp(item.getTargetComponent()),
+                            "Removing hidden applications from the standard home screen");
+        }
         mLauncherBinder.bindWorkspace(true /* incrementBindId */, /* isBindSync= */ false);
         logASplit("bindWorkspace finished");
 
@@ -318,6 +329,14 @@ public class LoaderTask implements Runnable {
             Trace.endSection();
         }
         logASplit("loadAllApps finished");
+
+        if (DesktopMode.isStandard(mContext)
+                && Objects.equals(mIDP.dbFile, mDbName)) {
+            // Model tasks run inline on this thread and are discarded until this load commits.
+            com.android.launcher3.util.Executors.MODEL_EXECUTOR.post(() ->
+                    mModel.enqueueModelUpdateTask(
+                            new SyncStandardDesktopTask(mWorkspaceItemSpaceFinder)));
+        }
 
         verifyNotStopped();
         mLauncherBinder.bindAllApps();

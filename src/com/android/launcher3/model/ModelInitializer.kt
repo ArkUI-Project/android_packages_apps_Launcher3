@@ -28,6 +28,8 @@ import com.android.launcher3.Flags
 import com.android.launcher3.InvariantDeviceProfile
 import com.android.launcher3.InvariantDeviceProfile.OnIDPChangeListener
 import com.android.launcher3.LauncherModel
+import com.android.launcher3.LauncherPrefChangeListener
+import com.android.launcher3.LauncherPrefs
 import com.android.launcher3.Utilities
 import com.android.launcher3.dagger.ApplicationContext
 import com.android.launcher3.graphics.ThemeManager
@@ -78,6 +80,15 @@ constructor(
 
     fun initialize(model: LauncherModel) {
         initializeDisplayEvents(model)
+
+        val prefs = LauncherPrefs.get(context)
+        val desktopModeListener = LauncherPrefChangeListener { key ->
+            if (key == LauncherPrefs.STANDARD_DESKTOP.sharedPrefKey) model.forceReload()
+        }
+        prefs.addListener(desktopModeListener, LauncherPrefs.STANDARD_DESKTOP)
+        lifeCycle.addCloseable {
+            prefs.removeListener(desktopModeListener, LauncherPrefs.STANDARD_DESKTOP)
+        }
 
         // System changes
         val modelCallbacks = model.newModelCallbacks()

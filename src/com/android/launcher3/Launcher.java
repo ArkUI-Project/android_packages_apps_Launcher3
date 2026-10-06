@@ -214,6 +214,7 @@ import com.android.launcher3.pm.PinRequestHelper;
 import com.android.launcher3.popup.ArrowPopup;
 import com.android.launcher3.popup.PopupController;
 import com.android.launcher3.popup.SystemShortcut;
+import com.android.launcher3.settings.DesktopMode;
 import com.android.launcher3.statemanager.StateManager;
 import com.android.launcher3.statemanager.StateManager.StateHandler;
 import com.android.launcher3.statemanager.StatefulActivity;
@@ -382,6 +383,13 @@ public class Launcher extends StatefulActivity<LauncherState>
     // We only want to get the SharedPreferences once since it does an FS stat each time we get
     // it from the context.
     private SharedPreferences mSharedPrefs;
+    private final SharedPreferences.OnSharedPreferenceChangeListener mDesktopModeListener =
+            (preferences, key) -> {
+                if (LauncherPrefs.STANDARD_DESKTOP.getSharedPrefKey().equals(key)) {
+                    AbstractFloatingView.closeAllOpenViews(this);
+                    mStateManager.goToState(NORMAL, false);
+                }
+            };
 
     // Activity result which needs to be processed after workspace has loaded.
     private ActivityResultInfo mPendingActivityResult;
@@ -469,6 +477,7 @@ public class Launcher extends StatefulActivity<LauncherState>
                 appWidgetId -> getWorkspace().removeWidget(appWidgetId));
 
         setupViews();
+        mSharedPrefs.registerOnSharedPreferenceChangeListener(mDesktopModeListener);
         updateDisallowBack();
 
         mAppWidgetHolder.startListening();
@@ -1251,6 +1260,9 @@ public class Launcher extends StatefulActivity<LauncherState>
         int stateOrdinal = savedState.getInt(RUNTIME_STATE, NORMAL.ordinal);
         LauncherState[] stateValues = LauncherState.values();
         LauncherState state = stateValues[stateOrdinal];
+        if (state == ALL_APPS && DesktopMode.isStandard(this)) {
+            state = NORMAL;
+        }
 
         NonConfigInstance lastInstance = (NonConfigInstance) getLastNonConfigurationInstance();
         boolean forceRestore = lastInstance != null
@@ -1623,6 +1635,7 @@ public class Launcher extends StatefulActivity<LauncherState>
     }
 
     private void toggleAllApps(boolean alreadyOnHome, boolean focusSearch) {
+        if (DesktopMode.isStandard(this)) return;
         if (getStateManager().isInStableState(ALL_APPS)) {
             getStateManager().goToState(NORMAL, alreadyOnHome);
         } else {
@@ -1649,6 +1662,7 @@ public class Launcher extends StatefulActivity<LauncherState>
     }
 
     private void showAllAppsWithSelectedTabFromIntent(boolean alreadyOnHome, int tab) {
+        if (DesktopMode.isStandard(this)) return;
         AbstractFloatingView.closeAllOpenViews(this);
         getStateManager().goToState(ALL_APPS, alreadyOnHome);
         if (mAppsView.isSearching()) {
@@ -1722,6 +1736,7 @@ public class Launcher extends StatefulActivity<LauncherState>
     public void onDestroy() {
         super.onDestroy();
         ACTIVITY_TRACKER.onContextDestroyed(this);
+        mSharedPrefs.unregisterOnSharedPreferenceChangeListener(mDesktopModeListener);
 
         SettingsCache.INSTANCE.get(this).unregister(TOUCHPAD_NATURAL_SCROLLING,
                 mNaturalScrollingChangedListener);

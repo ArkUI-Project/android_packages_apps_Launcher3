@@ -25,7 +25,10 @@ import com.android.launcher3.icons.IconCache
 import com.android.launcher3.model.BgDataModel.FixedContainerItems
 import com.android.launcher3.model.data.AppInfo
 import com.android.launcher3.model.data.ItemInfo
+import com.android.launcher3.model.tasks.SyncStandardDesktopTask
+import com.android.launcher3.settings.DesktopMode
 import com.android.launcher3.util.Executors.MAIN_EXECUTOR
+import com.android.launcher3.util.Executors.MODEL_EXECUTOR
 import com.android.launcher3.widget.model.WidgetsListBaseEntriesBuilder
 import java.util.function.Predicate
 import javax.inject.Inject
@@ -39,6 +42,7 @@ constructor(
     val dataModel: BgDataModel,
     val allAppsList: AllAppsList,
     val model: LauncherModel,
+    private val workspaceItemSpaceFinder: WorkspaceItemSpaceFinder,
 ) {
 
     private val uiExecutor = MAIN_EXECUTOR
@@ -89,6 +93,12 @@ constructor(
             val data = allAppsList.immutableData
             scheduleCallbackTask {
                 it.bindAllApplications(data.apps, data.flags, data.packageUserKeyToUidMap)
+            }
+            if (DesktopMode.isStandard(context)) {
+                // Finish package removals and activity replacements before checking for gaps.
+                MODEL_EXECUTOR.post {
+                    model.enqueueModelUpdateTask(SyncStandardDesktopTask(workspaceItemSpaceFinder))
+                }
             }
         }
     }

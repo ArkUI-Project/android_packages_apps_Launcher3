@@ -44,6 +44,7 @@ import com.android.launcher3.Utilities;
 import com.android.launcher3.anim.AnimatorPlaybackController;
 import com.android.launcher3.logger.LauncherAtom;
 import com.android.launcher3.logging.StatsLogManager;
+import com.android.launcher3.settings.DesktopMode;
 import com.android.launcher3.states.StateAnimationConfig;
 import com.android.launcher3.util.FlingBlockCheck;
 import com.android.launcher3.util.TouchController;
@@ -455,7 +456,8 @@ public abstract class AbstractStateChangeTouchController
     }
 
     protected boolean shouldOpenAllApps(boolean isDragTowardPositive) {
-        return (isDragTowardPositive && !mIsTrackpadReverseScroll)
-                || (!isDragTowardPositive && mIsTrackpadReverseScroll);
+        return !DesktopMode.isStandard(mLauncher)
+                && ((isDragTowardPositive && !mIsTrackpadReverseScroll)
+                        || (!isDragTowardPositive && mIsTrackpadReverseScroll));
     }
 }
