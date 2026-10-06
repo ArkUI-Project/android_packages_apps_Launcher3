@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2008 The Android Open Source Project
+ * Modified by the ArkUI Project in 2026 for large and privacy-protected folder interactions.
  * Copyright (C) 2026 The ArkUI Project (frosted folder surface)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -701,6 +702,7 @@ public class Folder extends AbstractFloatingView implements ClipPathView, DragSo
      * Opens the folder as part of a drag operation
      */
     public void beginExternalDrag() {
+        if (mInfo.isPrivacyLocked()) return;
         mIsExternalDrag = true;
         mIsDragInProgress = true;
 
@@ -721,7 +723,11 @@ public class Folder extends AbstractFloatingView implements ClipPathView, DragSo
      * is played.
      */
     public void animateOpen() {
-        animateOpen(mInfo.getContents(), 0);
+        if (mInfo.isPrivacyLocked()) {
+            mFolderIcon.authenticatePrivacy(() -> animateOpen(mInfo.getContents(), 0));
+        } else {
+            animateOpen(mInfo.getContents(), 0);
+        }
     }
 
     /**
@@ -732,6 +738,9 @@ public class Folder extends AbstractFloatingView implements ClipPathView, DragSo
     private void animateOpen(List<ItemInfo> items, int pageNo) {
         if (!shouldAnimateOpen(items)) {
             return;
+        }
+        if (mInfo.isPrivacyLocked() && mActivityContext instanceof Launcher launcher) {
+            FolderPrivacy.secure(launcher);
         }
         Folder openFolder = getOpen(mActivityContext);
         closeOpenFolder(openFolder);
@@ -855,7 +864,8 @@ public class Folder extends AbstractFloatingView implements ClipPathView, DragSo
      * Determines whether we should animate the folder opening.
      */
     boolean shouldAnimateOpen(List<ItemInfo> items) {
-        if (items == null || items.size() <= 1) {
+        if (items == null || items.isEmpty()
+                || (items.size() == 1 && !mInfo.isPrivacyLocked() && !mInfo.isLarge())) {
             Log.d(TAG, "Couldn't animate folder open because items is: " + items);
             return false;
         }
@@ -863,9 +873,12 @@ public class Folder extends AbstractFloatingView implements ClipPathView, DragSo
     }
 
     private FolderAnimationCreator getFolderAnimationManager() {
+        if (mInfo.isLarge() || mInfo.isPrivacyLocked()) {
+            return new LargeFolderAnimationManager(this);
+        }
         boolean shouldUseSpringMotion = Flags.enableLauncherIconShapes()
                 && Flags.enableExpressiveFolderExpansion();
-        if (shouldUseSpringMotion) {
+        if (shouldUseSpringMotion && !mInfo.isLarge() && !mInfo.isPrivacyLocked()) {
             ShapeDelegate shapeDelegate =
                     ThemeManager.INSTANCE.get(mActivityContext.asContext()).getFolderShape();
             return new FolderAnimationSpringBuilderManager(
@@ -916,6 +929,15 @@ public class Folder extends AbstractFloatingView implements ClipPathView, DragSo
         } else {
             closeComplete(false);
             post(this::announceAccessibilityChanges);
+        }
+        if (mInfo.isPrivacyLocked() && mActivityContext instanceof Launcher launcher) {
+            if (animate && mCurrentAnimator != null) {
+                mCurrentAnimator.addListener(new AnimatorListenerAdapter() {
+                    @Override public void onAnimationEnd(Animator animation) {
+                        FolderPrivacy.releaseAfterCleanFrame(launcher);
+                    }
+                });
+            } else FolderPrivacy.releaseAfterCleanFrame(launcher);
         }
 
         // Notify the accessibility manager that this folder "window" has disappeared and no
@@ -1306,12 +1328,18 @@ public class Folder extends AbstractFloatingView implements ClipPathView, DragSo
 
     @VisibleForTesting
     int getContentAreaWidth() {
-        return Math.max(mContent.getDesiredWidth(), MIN_CONTENT_DIMEN);
+        int minimum = MIN_CONTENT_DIMEN;
+        if (mInfo != null && (mInfo.isLarge() || mInfo.isPrivacyLocked())) {
+            minimum = Math.max(minimum,
+                    getResources().getDimensionPixelSize(R.dimen.folder_title_min_width)
+                            + mFooter.getPaddingLeft() + mFooter.getPaddingRight());
+        }
+        return Math.max(mContent.getDesiredWidth(), minimum);
     }
 
     @VisibleForTesting
     int getFolderWidth() {
-        return getPaddingLeft() + getPaddingRight() + mContent.getDesiredWidth();
+        return getPaddingLeft() + getPaddingRight() + getContentAreaWidth();
     }
 
     @VisibleForTesting
@@ -1383,6 +1411,7 @@ public class Folder extends AbstractFloatingView implements ClipPathView, DragSo
     }
 
     void replaceFolderWithFinalItem() {
+        if ((mInfo.isPrivacyLocked() || mInfo.isLarge()) && !mInfo.getContents().isEmpty()) return;
         mDestroyed = mLauncherDelegate.replaceFolderWithFinalItem(this);
     }
 

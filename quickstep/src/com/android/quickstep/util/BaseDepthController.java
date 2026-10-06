@@ -139,6 +139,8 @@ public class BaseDepthController {
     private boolean mAppTransitionOpening;
     private long mAppTransitionDuration;
     private float mStackedOverviewBlur;
+    private Object mFolderFocusOwner;
+    private float mFolderFocusBlur;
     private ValueAnimator mAppBlurRecovery;
     private int mWorkspaceBlurRadius;
     private final SparseArray<RenderEffect> mWorkspaceBlurEffects = new SparseArray<>();
@@ -291,9 +293,22 @@ public class BaseDepthController {
         }
     }
 
+    public void beginFolderFocusBlur(Object owner) {
+        mFolderFocusOwner = owner;
+        mMotion = DesktopAnimationSettings.read(mLauncher);
+    }
+
+    public void setFolderFocusBlur(Object owner, float progress) {
+        if (mFolderFocusOwner != owner) return;
+        mFolderFocusBlur = Utilities.boundToRange(progress, 0f, 1f);
+        if (mFolderFocusBlur == 0f) mFolderFocusOwner = null;
+        refreshAppTransitionBlur();
+    }
+
     private int getAppTransitionBlurRadius() {
         return mCrossWindowBlursEnabled && BlurUtils.supportsBlursOnWindows()
-                ? Math.round(Math.max(mAppTransitionBlur, mStackedOverviewBlur)
+                ? Math.round(Math.max(mFolderFocusBlur,
+                        Math.max(mAppTransitionBlur, mStackedOverviewBlur))
                         * Math.min(mMaxBlurRadius,
                         Utilities.dpToPx(mMotion.blurRadius))) : 0;
     }
@@ -440,7 +455,7 @@ public class BaseDepthController {
     @VisibleForTesting
     public boolean blurWorkspaceDepthTargets() {
         if (!Flags.allAppsBlur() && mAppTransitionOwner == null && mAppBlurRecovery == null
-                && mStackedOverviewBlur == 0f && mWorkspaceBlurRadius == 0) {
+                && mStackedOverviewBlur == 0f && mFolderFocusBlur == 0f && mWorkspaceBlurRadius == 0) {
             return false;
         }
         StateManager<LauncherState, Launcher> stateManager = mLauncher.getStateManager();

@@ -105,13 +105,17 @@ public class FolderAdaptiveIcon extends AdaptiveIconDrawable {
         // Initialize the actual draw commands on the UI thread to avoid race conditions with
         // FolderIcon draw pass
         try {
-            MAIN_EXECUTOR.submit(() -> {
+            boolean allowed = MAIN_EXECUTOR.submit(() -> {
                 FolderIcon icon = activity.findFolderIcon(folderId);
                 if (icon == null) {
                     throw new IllegalArgumentException("Folder not found with id: " + folderId);
                 }
+                // ArkUI: do not rasterize protected app previews for transition thumbnails.
+                if (icon.mInfo.isPrivacyLocked()) return false;
                 initLayersOnUiThread(icon, requestedSize, bgCanvas, fgCanvas, badgeCanvas);
+                return true;
             }).get();
+            if (!allowed) return null;
         } catch (Exception e) {
             Log.e(TAG, "Unable to create folder icon", e);
             return null;

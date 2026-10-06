@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2023 The Android Open Source Project
+ * Modified by the ArkUI Project in 2026 to restore large-folder geometry and previews.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -478,6 +479,11 @@ class WorkspaceItemProcessor(
         collection.spanY = 1
         if (collection is FolderInfo) {
             collection.options = c.options
+            // ArkUI folders occupy their actual desktop grid region, including after a reload.
+            if (collection.container == Favorites.CONTAINER_DESKTOP) {
+                collection.spanX = c.spanX.coerceIn(1, 2)
+                collection.spanY = c.spanY.coerceIn(1, 2)
+            }
         } else {
             // An app pair may be inside another folder, so it needs to preserve rank information.
             collection.rank = c.rank
@@ -725,7 +731,8 @@ class WorkspaceItemProcessor(
                     info is WorkspaceItemInfo &&
                         info.matchingLookupFlag.isVisuallyLessThan(Favorites.DESKTOP_ICON_FLAG) &&
                         info.itemType == Favorites.ITEM_TYPE_APPLICATION &&
-                        verifiers.any { it.isItemInPreview(info.rank) }
+                        (verifiers.any { it.isItemInPreview(info.rank) } ||
+                            (itemInfo.isLarge && info.rank < 12))
                 ) {
                     iconCache.getTitleAndIcon(info, Favorites.DESKTOP_ICON_FLAG)
                 }

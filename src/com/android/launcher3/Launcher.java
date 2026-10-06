@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2008 The Android Open Source Project
+ * Modified by the ArkUI Project in 2026 for folder focus and privacy lifecycle.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -1222,6 +1223,7 @@ public class Launcher extends StatefulActivity<LauncherState>
 
     @Override
     protected void onPause() {
+        com.android.launcher3.folder.FolderPrivacy.closeOnPause(this);
         // Ensure that items added to Launcher are queued until Launcher returns
         ItemInstallQueue.INSTANCE.get(this).pauseModelPush(FLAG_ACTIVITY_PAUSED);
 
@@ -2140,6 +2142,16 @@ public class Launcher extends StatefulActivity<LauncherState>
         }
 
         RunnableList result = super.startActivitySafely(v, intent, item);
+        if (result != null) {
+            com.android.launcher3.folder.FolderPreviewUsage.record(this, item);
+            result.add(() -> mWorkspace.mapOverItems((info, view) -> {
+                if (view instanceof FolderIcon icon
+                        && icon.mInfo.hasOption(FolderInfo.FLAG_SMART_PREVIEW)) {
+                    icon.refreshFolderPresentation();
+                }
+                return false;
+            }));
+        }
         if (result != null && v instanceof BubbleTextView) {
             // This is set to the view that launched the activity that navigated the user away
             // from launcher. Since there is no callback for when the activity has finished
@@ -2387,9 +2399,17 @@ public class Launcher extends StatefulActivity<LauncherState>
                 op -> mapOverCellLayouts(containerArray, op);
 
         // Order: Preferred item by itself or in folder, then by matching package/user
-        return visibleContainer.getFirstMatch(
+        View match = visibleContainer.getFirstMatch(
                 preferredItem, forFolderMatch(preferredItem),
                 packageAndUserAndApp, forFolderMatch(packageAndUserAndApp));
+        if (match instanceof FolderIcon icon) {
+            if (icon.mInfo.isPrivacyLocked()) return null;
+            if (icon.mInfo.isLarge()) {
+                View target = icon.findDirectAppTarget(preferredItem);
+                return target != null ? target : icon.findDirectAppTarget(packageAndUserAndApp);
+            }
+        }
+        return match;
     }
 
     private ValueAnimator createNewAppBounceAnimation(View v, int i) {
@@ -2714,6 +2734,11 @@ public class Launcher extends StatefulActivity<LauncherState>
     public List<View> getDepthBlurTargets() {
         return mDepthBlurTargets == null ? Collections.emptyList() : mDepthBlurTargets;
     }
+
+    /** Quickstep owns compositor blur; SDK-only variants retain the tonal popup. */
+    public void beginFolderFocusBlur(Object owner) { }
+
+    public void setFolderFocusBlur(Object owner, float progress) { }
 
     /**
      * Animates Launcher elements during a transition to the Widgets pages.

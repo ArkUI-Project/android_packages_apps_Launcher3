@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copyright (C) 2026 The ArkUI Project; SPDX-License-Identifier: Apache-2.0 -->
+<resources>
+    <string name="folder_action_open">Open</string>
+    <string name="folder_action_edit">Edit folder</string>
+    <string name="folder_action_lock">Lock folder</string>
+    <string name="folder_action_unlock">Remove folder lock</string>
+    <string name="folder_locked_description">Locked folder: %1$s. Verify your privacy password to open.</string>
+    <string name="folder_more_apps">Open folder, %1$d more apps</string>
+    <string name="folder_resize_handle">Resize folder</string>
+    <string name="folder_resize_no_space">There is not enough room for this folder size.</string>
+    <string name="folder_resized">Folder resized to %1$d by %2$d</string>
+    <string name="folder_lock_enabled">Folder locked with your privacy password</string>
+    <string name="folder_lock_removed">Folder lock removed</string>
+    <string name="folder_editor_name">Folder name</string>
+    <string name="folder_editor_size">Folder size</string>
+    <string name="folder_editor_preview">Folder preview</string>
+    <string name="folder_editor_smart_sort">Smart ordering of visible apps</string>
+    <string name="folder_editor_smart_sort_summary">Keep frequently used apps within reach</string>
+    <string name="folder_editor_cancel">Cancel</string>
+    <string name="folder_editor_save">Save</string>
+    <string name="folder_editor_size_option">%1$d × %2$d</string>
+    <item name="folder_editor_sheet" type="id" />
+    <item name="folder_editor_name" type="id" />
+    <item name="folder_editor_cancel" type="id" />
+    <item name="folder_editor_save" type="id" />
+    <item name="folder_editor_smart_sort" type="id" />
+    <item name="folder_size_1x1" type="id" />
+    <item name="folder_size_2x2" type="id" />
+    <item name="folder_size_2x1" type="id" />
+    <item name="folder_size_1x2" type="id" />
+    <item name="large_folder_preview" type="id" />
+    <item name="folder_preview_app" type="id" />
+    <item name="folder_preview_more" type="id" />
+    <item name="folder_resize_handle" type="id" />
+    <item name="folder_action_open" type="id" />
+    <item name="folder_action_edit" type="id" />
+    <item name="folder_action_lock" type="id" />
+</resources>

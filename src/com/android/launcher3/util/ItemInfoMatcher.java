@@ -65,7 +65,9 @@ public abstract class ItemInfoMatcher {
      * Returns a matcher for items within folders.
      */
     public static Predicate<ItemInfo> forFolderMatch(Predicate<ItemInfo> childOperator) {
-        return info -> info instanceof FolderInfo && ((FolderInfo) info).getContents().stream()
+        // ArkUI: private contents must not become unauthenticated animation targets.
+        return info -> info instanceof FolderInfo folder && !folder.isPrivacyLocked()
+                && folder.getContents().stream()
                 .anyMatch(childOperator);
     }
 

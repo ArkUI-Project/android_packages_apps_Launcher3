@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copyright (C) 2026 The ArkUI Project; SPDX-License-Identifier: Apache-2.0 -->
+<resources>
+    <style name="ArkuiFolderEditorTheme" parent="Theme.Material3Expressive.DynamicColors.DayNight.NoActionBar">
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="textInputStyle">@style/Widget.Material3.TextInputLayout.OutlinedBox</item>
+    </style>
+</resources>

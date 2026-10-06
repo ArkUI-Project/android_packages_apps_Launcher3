@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2008 The Android Open Source Project
+ * Modified by the ArkUI Project in 2026 for resizable folder actions.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -1797,6 +1798,11 @@ public class Workspace<T extends View & PageIndicator> extends PagedView<T>
             if (btv.isDisplaySearchResult()) {
                 dragOptions.preDragEndScale = (float) mAllAppsIconSize / btv.getIconSize();
             }
+        } else if (child instanceof FolderIcon folderIcon && !dragOptions.isAccessibleDrag) {
+            Popup popup = com.android.launcher3.folder.FolderActionsPopup.show(folderIcon);
+            if (popup != null) {
+                dragOptions.preDragCondition = popup.createPreDragCondition();
+            }
         } else if (Flags.homeScreenEditImprovements() && child instanceof Poppable
                 && !dragOptions.isAccessibleDrag) {
             Popup popup = mLauncher.getPopupControllerForHomeScreenItems()
@@ -1872,6 +1878,8 @@ public class Workspace<T extends View & PageIndicator> extends PagedView<T>
     public boolean acceptDrop(DragObject d) {
         // If it's an external drop (e.g. from All Apps), check if it should be accepted
         CellLayout dropTargetLayout = mDropToLayout;
+        if (d.dragInfo instanceof FolderInfo folder && folder.isLarge()
+                && mLauncher.isHotseatLayout(dropTargetLayout)) return false;
         if (d.dragSource != this) {
             // Don't accept the drop if we're not over a valid drop target at time of drop
             if (dropTargetLayout == null) {
@@ -1980,10 +1988,21 @@ public class Workspace<T extends View & PageIndicator> extends PagedView<T>
 
     boolean willAddToExistingUserFolder(ItemInfo dragInfo, CellLayout target, int[] targetCell,
                                         float distance) {
-        if (distance > target.getFolderCreationRadius(targetCell)) return false;
         View dropOverView = target.getChildAt(targetCell[0], targetCell[1]);
+        if (!isInFolderDropRegion(dropOverView, target, targetCell, distance)) return false;
         return willAddToExistingUserFolder(dragInfo, dropOverView);
 
+    }
+
+    private boolean isInFolderDropRegion(View view, CellLayout layout, int[] cell, float distance) {
+        if (!(view instanceof FolderIcon icon) || !icon.mInfo.isLarge()) {
+            return distance <= layout.getFolderCreationRadius(cell);
+        }
+        float[] point = {mDragViewVisualCenter[0], mDragViewVisualCenter[1]};
+        Utilities.mapCoordInSelfToDescendant(icon, layout, point);
+        Rect preview = new Rect();
+        icon.getPreviewBounds(preview);
+        return preview.contains(Math.round(point[0]), Math.round(point[1]));
     }
 
     boolean willAddToExistingUserFolder(ItemInfo dragInfo, View dropOverView) {
@@ -2063,9 +2082,8 @@ public class Workspace<T extends View & PageIndicator> extends PagedView<T>
 
     boolean addToExistingFolderIfNecessary(View newView, CellLayout target, int[] targetCell,
             float distance, DragObject d, boolean external) {
-        if (distance > target.getFolderCreationRadius(targetCell)) return false;
-
         View dropOverView = target.getChildAt(targetCell[0], targetCell[1]);
+        if (!isInFolderDropRegion(dropOverView, target, targetCell, distance)) return false;
         if (!mAddToExistingFolderOnDrop) return false;
         mAddToExistingFolderOnDrop = false;
 
@@ -2758,7 +2776,8 @@ public class Workspace<T extends View & PageIndicator> extends PagedView<T>
     }
 
     private void manageFolderFeedback(float distance, DragObject dragObject) {
-        if (distance > mDragTargetLayout.getFolderCreationRadius(mTargetCell)) {
+        mDragOverView = mDragTargetLayout.getChildAt(mTargetCell[0], mTargetCell[1]);
+        if (!isInFolderDropRegion(mDragOverView, mDragTargetLayout, mTargetCell, distance)) {
             if ((mDragMode == DRAG_MODE_ADD_TO_FOLDER
                     || mDragMode == DRAG_MODE_CREATE_FOLDER)) {
                 setDragMode(DRAG_MODE_NONE);
@@ -2766,7 +2785,6 @@ public class Workspace<T extends View & PageIndicator> extends PagedView<T>
             return;
         }
 
-        mDragOverView = mDragTargetLayout.getChildAt(mTargetCell[0], mTargetCell[1]);
         ItemInfo info = dragObject.dragInfo;
         boolean userFolderPending = willCreateUserFolder(info, mDragOverView, false);
         if (mDragMode == DRAG_MODE_NONE && userFolderPending) {

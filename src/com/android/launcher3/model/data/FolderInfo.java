@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2008 The Android Open Source Project
+ * Modified by the ArkUI Project in 2026 for persistent folder privacy and dimensions.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -57,6 +58,12 @@ public class FolderInfo extends CollectionInfo {
     public static final int FLAG_MULTI_PAGE_ANIMATION = 0x00000004;
 
     public static final int FLAG_MANUAL_FOLDER_NAME = 0x00000008;
+
+    /** ArkUI: a folder's contents require the independent system privacy password. */
+    public static final int FLAG_PRIVACY_LOCKED = 0x00000100;
+
+    /** Prefer frequently launched apps in the closed folder, preserving its manual order. */
+    public static final int FLAG_SMART_PREVIEW = 0x00000200;
 
     /**
      * Different states of folder label.
@@ -139,6 +146,14 @@ public class FolderInfo extends CollectionInfo {
 
     public boolean hasOption(int optionFlag) {
         return (options & optionFlag) != 0;
+    }
+
+    public boolean isPrivacyLocked() {
+        return hasOption(FLAG_PRIVACY_LOCKED);
+    }
+
+    public boolean isLarge() {
+        return spanX > 1 || spanY > 1;
     }
 
     /**
@@ -230,6 +245,7 @@ public class FolderInfo extends CollectionInfo {
     public void copyFrom(@NonNull ItemInfo info) {
         super.copyFrom(info);
         if (info instanceof FolderInfo fi) {
+            options = fi.options;
             contents.addAll(fi.getContents());
         }
     }

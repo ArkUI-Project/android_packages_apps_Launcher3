@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copyright (C) 2026 The ArkUI Project; SPDX-License-Identifier: Apache-2.0 -->
+<resources>
+    <string name="folder_action_open">打开</string>
+    <string name="folder_action_edit">编辑文件夹</string>
+    <string name="folder_action_lock">文件夹上锁</string>
+    <string name="folder_action_unlock">解除文件夹上锁</string>
+    <string name="folder_locked_description">已上锁的文件夹：%1$s。验证隐私密码后打开。</string>
+    <string name="folder_more_apps">打开文件夹，还有 %1$d 个应用</string>
+    <string name="folder_resize_handle">调整文件夹大小</string>
+    <string name="folder_resize_no_space">没有足够空间使用此文件夹大小。</string>
+    <string name="folder_resized">文件夹已调整为 %1$d × %2$d</string>
+    <string name="folder_lock_enabled">文件夹已使用隐私密码上锁</string>
+    <string name="folder_lock_removed">文件夹已解除上锁</string>
+    <string name="folder_editor_name">文件夹名称</string>
+    <string name="folder_editor_size">文件夹尺寸</string>
+    <string name="folder_editor_preview">文件夹预览</string>
+    <string name="folder_editor_smart_sort">外露应用智能排序</string>
+    <string name="folder_editor_smart_sort_summary">常用应用优先显示</string>
+    <string name="folder_editor_cancel">取消</string>
+    <string name="folder_editor_save">保存</string>
+    <string name="folder_editor_size_option">%1$d × %2$d</string>
+</resources>

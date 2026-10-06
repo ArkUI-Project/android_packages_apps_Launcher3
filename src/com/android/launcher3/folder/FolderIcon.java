@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2008 The Android Open Source Project
+ * Modified by the ArkUI Project in 2026 for resizable, privacy-protected folders.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,6 +33,7 @@ import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.Rect;
+import android.graphics.RectF;
 import android.graphics.drawable.Drawable;
 import android.os.Looper;
 import android.util.AttributeSet;
@@ -142,6 +144,11 @@ public class FolderIcon extends FrameLayout implements FloatingIconViewCompanion
 
     private float mScaleForReorderBounce = 1f;
     private PopupController mPopupController;
+    private LargeFolderPreview mLargePreview;
+    private boolean mResizeEditing;
+    private boolean mPreviewTransition;
+    private boolean mPrivacyPending;
+    private int mPrivacyRequest;
 
     private static final Property<FolderIcon, Float> DOT_SCALE_PROPERTY
             = new Property<FolderIcon, Float>(Float.TYPE, "dotScale") {
@@ -207,6 +214,7 @@ public class FolderIcon extends FrameLayout implements FloatingIconViewCompanion
         FolderIcon icon = (FolderIcon) inflater.inflate(resId, group, false);
 
         icon.setClipToPadding(false);
+        icon.setClipChildren(false);
         icon.mFolderName = icon.findViewById(R.id.folder_icon_name);
         if (icon.mFolderName.shouldShowLabel()) {
             icon.mFolderName.applyLabel(folderInfo.title);
@@ -230,6 +238,9 @@ public class FolderIcon extends FrameLayout implements FloatingIconViewCompanion
         icon.mPreviewVerifier = createFolderGridOrganizer(activity.getDeviceProfile());
         icon.mPreviewVerifier.setFolderInfo(folderInfo);
         icon.updatePreviewItems(false);
+        icon.mLargePreview = new LargeFolderPreview(icon);
+        icon.addView(icon.mLargePreview, 0, new FrameLayout.LayoutParams(-1, -1));
+        icon.refreshFolderPresentation();
 
         return icon;
     }
@@ -244,10 +255,113 @@ public class FolderIcon extends FrameLayout implements FloatingIconViewCompanion
     }
 
     public void getPreviewBounds(Rect outBounds) {
+        if (usesLargePreview()) {
+            mLargePreview.getSurfaceBounds(outBounds);
+            return;
+        }
         mPreviewItemManager.recomputePreviewDrawingParams();
         mBackground.getBounds(outBounds);
         // The preview items go outside of the bounds of the background.
         Utilities.scaleRectAboutCenter(outBounds, ICON_OVERLAP_FACTOR);
+    }
+
+    void getCompactPreviewBounds(Rect outBounds) {
+        mPreviewItemManager.recomputePreviewDrawingParams();
+        mBackground.getBounds(outBounds);
+    }
+
+    void getCompactItemBounds(int index, RectF outBounds) {
+        mPreviewItemManager.recomputePreviewDrawingParams();
+        PreviewItemDrawingParams params = mPreviewItemManager.computePreviewItemDrawingParams(
+                Math.min(4, index), Math.min(4, mInfo.getContents().size()), null);
+        float size = params.scale * mPreviewItemManager.getIntrinsicIconSize();
+        float x = params.transX + mBackground.basePreviewOffsetX;
+        float y = params.transY + mBackground.basePreviewOffsetY;
+        outBounds.set(x, y, x + size, y + size);
+    }
+
+    public boolean usesLargePreview() {
+        return mLargePreview != null && (mInfo.isLarge() || mInfo.isPrivacyLocked()
+                || mResizeEditing || mPreviewTransition);
+    }
+
+    public float getPreviewCornerRadius() {
+        return usesLargePreview() ? mLargePreview.getCornerRadius() : mBackground.previewSize / 2f;
+    }
+
+    public void refreshFolderPresentation() {
+        if (mLargePreview != null) {
+            mLargePreview.refresh();
+            mLargePreview.setShown(usesLargePreview() && mBackgroundIsVisible);
+        }
+        setContentDescription(getAccessiblityTitle(mInfo.title));
+        requestLayout();
+        invalidate();
+    }
+
+    public void setResizeEditing(boolean editing) {
+        mResizeEditing = editing;
+        mPreviewTransition = !editing && !mInfo.isLarge() && !mInfo.isPrivacyLocked();
+        mLargePreview.setEditing(editing);
+        mLargePreview.setShown(usesLargePreview() && mBackgroundIsVisible);
+        if (mPreviewTransition) postDelayed(() -> {
+            if (mResizeEditing || mInfo.isLarge() || mInfo.isPrivacyLocked()) return;
+            mPreviewTransition = false;
+            mLargePreview.setShown(false);
+            mFolderName.setTranslationX(0);
+            mFolderName.setTranslationY(0);
+            invalidate();
+        }, 280);
+        requestLayout();
+        invalidate();
+    }
+
+    public void prepareResize() { mLargePreview.prepareResize(); }
+
+    public void cancelPreparedResize() { mLargePreview.cancelResize(); }
+
+    public void setResizeResistance(float dx, float dy) {
+        mLargePreview.setResizeResistance(dx, dy);
+    }
+
+    public void finishInteractiveResize() { mLargePreview.finishInteractiveResize(); }
+
+    public boolean getLargePreviewItemBounds(int index, RectF bounds) {
+        return mLargePreview != null && mLargePreview.getItemBounds(index, bounds);
+    }
+
+    public boolean getLargePreviewItemBounds(ItemInfo item, RectF bounds) {
+        return mLargePreview != null && mLargePreview.getItemBounds(item, bounds);
+    }
+
+    public View findDirectAppTarget(Predicate<ItemInfo> matcher) {
+        return mLargePreview == null ? null : mLargePreview.findDirectTarget(matcher);
+    }
+
+    public void authenticatePrivacy(Runnable success) {
+        if (mPrivacyPending || !(mActivity instanceof Launcher launcher)) return;
+        mPrivacyPending = true;
+        int request = ++mPrivacyRequest;
+        com.android.launcher3.lineage.LineageUtils.showPrivacyPassword(launcher, () -> {
+            // Settings may deliver its callback before this activity receives onResume.
+            long expires = android.os.SystemClock.elapsedRealtime() + 5000;
+            Runnable ready = () -> {
+                if (request != mPrivacyRequest) return;
+                mPrivacyPending = false;
+                if (isAttachedToWindow() && mFolder != null && !mFolder.isDestroyed()
+                        && launcher.hasBeenResumed()
+                        && android.os.SystemClock.elapsedRealtime() < expires) success.run();
+            };
+            Runnable resumed = () -> post(ready);
+            if (launcher.hasBeenResumed()) post(ready);
+            else launcher.addEventCallback(com.android.launcher3.BaseActivity.EVENT_RESUMED,
+                    resumed);
+            postDelayed(() -> {
+                launcher.removeEventCallback(com.android.launcher3.BaseActivity.EVENT_RESUMED,
+                        resumed);
+                if (request == mPrivacyRequest) mPrivacyPending = false;
+            }, 5000);
+        }, () -> { if (request == mPrivacyRequest) mPrivacyPending = false; });
     }
 
     public float getBackgroundStrokeWidth() {
@@ -263,7 +377,8 @@ public class FolderIcon extends FrameLayout implements FloatingIconViewCompanion
     }
 
     private boolean willAcceptItem(ItemInfo item) {
-        return (willAcceptItemType(item.itemType) && item != mInfo && !mFolder.isOpen());
+        return !mInfo.isPrivacyLocked()
+                && (willAcceptItemType(item.itemType) && item != mInfo && !mFolder.isOpen());
     }
 
     public boolean acceptDrop(ItemInfo dragInfo) {
@@ -351,7 +466,7 @@ public class FolderIcon extends FrameLayout implements FloatingIconViewCompanion
 
             int numItemsInPreview = Math.min(MAX_NUM_ITEMS_IN_PREVIEW, index + 1);
             boolean itemAdded = false;
-            if (itemReturnedOnFailedDrop || index >= MAX_NUM_ITEMS_IN_PREVIEW) {
+            if (!mInfo.isLarge() && (itemReturnedOnFailedDrop || index >= MAX_NUM_ITEMS_IN_PREVIEW)) {
                 List<ItemInfo> oldPreviewItems = new ArrayList<>(mCurrentPreviewItems);
                 getFolder().addFolderContent(item, index, false);
                 mCurrentPreviewItems.clear();
@@ -378,7 +493,7 @@ public class FolderIcon extends FrameLayout implements FloatingIconViewCompanion
             }
 
             int[] center = new int[2];
-            float scale = getLocalCenterForIndex(index, numItemsInPreview, center);
+            float scale = getLocalCenterForIndex(item, index, numItemsInPreview, center);
             center[0] = Math.round(scaleRelativeToDragLayer * center[0]);
             center[1] = Math.round(scaleRelativeToDragLayer * center[1]);
 
@@ -386,6 +501,10 @@ public class FolderIcon extends FrameLayout implements FloatingIconViewCompanion
                     center[1] - animateView.getMeasuredHeight() / 2);
 
             float finalAlpha = index < MAX_NUM_ITEMS_IN_PREVIEW ? 1f : 0f;
+            if (mInfo.isLarge()) {
+                finalAlpha = getLargePreviewItemBounds(item, new RectF()) ? 1f : 0f;
+                mLargePreview.setItemDropping(item, true);
+            }
 
             float finalScale = scale * scaleRelativeToDragLayer;
 
@@ -403,6 +522,7 @@ public class FolderIcon extends FrameLayout implements FloatingIconViewCompanion
                     Interpolators.DECELERATE_2,
                     () -> {
                         mPreviewItemManager.hidePreviewItem(finalIndex, false);
+                        mLargePreview.setItemDropping(item, false);
                         mFolder.showItem(item);
                     },
                     DragLayer.ANIMATION_END_DISAPPEAR, null);
@@ -545,7 +665,16 @@ public class FolderIcon extends FrameLayout implements FloatingIconViewCompanion
         return mDotInfo != null && mDotInfo.hasDot();
     }
 
-    private float getLocalCenterForIndex(int index, int curNumItems, int[] center) {
+    private float getLocalCenterForIndex(ItemInfo item, int index, int curNumItems, int[] center) {
+        if (mInfo.isLarge()) {
+            RectF bounds = new RectF();
+            if (!getLargePreviewItemBounds(item, bounds)) mLargePreview.getOverflowBounds(bounds);
+            if (!bounds.isEmpty()) {
+                center[0] = Math.round(bounds.centerX());
+                center[1] = Math.round(bounds.centerY());
+                return bounds.width() / mPreviewItemManager.getIntrinsicIconSize();
+            }
+        }
         mTmpParams = mPreviewItemManager.computePreviewItemDrawingParams(
                 Math.min(MAX_NUM_ITEMS_IN_PREVIEW, index), curNumItems, mTmpParams);
 
@@ -569,6 +698,7 @@ public class FolderIcon extends FrameLayout implements FloatingIconViewCompanion
     @Override
     public void setIconVisible(boolean visible) {
         mBackgroundIsVisible = visible;
+        if (mLargePreview != null) mLargePreview.setShown(visible && usesLargePreview());
         invalidate();
     }
 
@@ -589,6 +719,10 @@ public class FolderIcon extends FrameLayout implements FloatingIconViewCompanion
         super.dispatchDraw(canvas);
 
         if (!mBackgroundIsVisible) return;
+        if (usesLargePreview()) {
+            if (!mInfo.isPrivacyLocked()) drawDot(canvas);
+            return;
+        }
 
         mPreviewItemManager.recomputePreviewDrawingParams();
 
@@ -616,9 +750,15 @@ public class FolderIcon extends FrameLayout implements FloatingIconViewCompanion
             iconBounds.right = iconBounds.left + iconSize;
             iconBounds.top = getPaddingTop();
             iconBounds.bottom = iconBounds.top + iconSize;
-
-            float iconScale = (float) mBackground.previewSize / iconSize;
-            Utilities.scaleRectAboutCenter(iconBounds, iconScale);
+            if (mInfo.isLarge()) {
+                Rect preview = new Rect();
+                getPreviewBounds(preview);
+                iconBounds.set(preview.right - iconSize, preview.top,
+                        preview.right, preview.top + iconSize);
+            } else {
+                float iconScale = (float) mBackground.previewSize / iconSize;
+                Utilities.scaleRectAboutCenter(iconBounds, iconScale);
+            }
 
             // If we are animating to the accepting state, animate the dot out.
             mDotParams.scale = Math.max(0, mDotScale - mBackground.getAcceptScaleProgress());
@@ -628,9 +768,24 @@ public class FolderIcon extends FrameLayout implements FloatingIconViewCompanion
 
     @Override
     protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+        if (mInfo != null && mLargePreview != null) {
+            DeviceProfile profile = mActivity.getDeviceProfile();
+            FrameLayout.LayoutParams label = (FrameLayout.LayoutParams) mFolderName.getLayoutParams();
+            if (mInfo.isLarge()) {
+                RectF surface = new RectF();
+                mLargePreview.calculateSurfaceBounds(MeasureSpec.getSize(widthMeasureSpec),
+                        MeasureSpec.getSize(heightMeasureSpec), surface);
+                label.topMargin = Math.round(surface.bottom + 8 * getResources().getDisplayMetrics().density);
+                label.height = mFolderName.getLineHeight() + Math.round(4 * getResources().getDisplayMetrics().density);
+            } else {
+                label.topMargin = profile.getWorkspaceIconProfile().getIconSizePx()
+                        + profile.getWorkspaceIconProfile().getIconDrawablePaddingPx();
+                label.height = FrameLayout.LayoutParams.MATCH_PARENT;
+            }
+        }
         boolean shouldCenterIcon = mActivity.getDeviceProfile().getWorkspaceIconProfile()
                 .getIconCenterVertically();
-        if (shouldCenterIcon) {
+        if (shouldCenterIcon && (mInfo == null || !mInfo.isLarge())) {
             int iconSize = mActivity.getDeviceProfile().getWorkspaceIconProfile().getIconSizePx();
             Paint.FontMetrics fm = mFolderName.getPaint().getFontMetrics();
             int cellHeightPx = iconSize + mFolderName.getCompoundDrawablePadding()
@@ -638,7 +793,36 @@ public class FolderIcon extends FrameLayout implements FloatingIconViewCompanion
             setPadding(getPaddingLeft(), (MeasureSpec.getSize(heightMeasureSpec)
                     - cellHeightPx) / 2, getPaddingRight(), getPaddingBottom());
         }
+        if (mInfo != null && mInfo.isLarge()) {
+            setPadding(getPaddingLeft(), 0, getPaddingRight(), getPaddingBottom());
+        }
+        if (mLargePreview != null) {
+            // Its geometry is in FolderIcon coordinates, including the normal preview offsets.
+            FrameLayout.LayoutParams preview = (FrameLayout.LayoutParams) mLargePreview.getLayoutParams();
+            preview.leftMargin = -getPaddingLeft();
+            preview.topMargin = -getPaddingTop();
+            preview.rightMargin = -getPaddingRight();
+            preview.bottomMargin = -getPaddingBottom();
+        }
         super.onMeasure(widthMeasureSpec, heightMeasureSpec);
+    }
+
+    @Override
+    protected void onLayout(boolean changed, int left, int top, int right, int bottom) {
+        super.onLayout(changed, left, top, right, bottom);
+        Rect bounds = new Rect();
+        getPreviewBounds(bounds);
+        alignLabelToPreview(new RectF(bounds));
+    }
+
+    void alignLabelToPreview(RectF bounds) {
+        if (mFolderName.getWidth() == 0) return;
+        mFolderName.animate().cancel();
+        mFolderName.setTranslationX(usesLargePreview()
+                ? bounds.centerX() - mFolderName.getLeft() - mFolderName.getWidth() / 2f : 0);
+        mFolderName.setTranslationY(usesLargePreview()
+                ? bounds.bottom + 8 * getResources().getDisplayMetrics().density
+                        - mFolderName.getTop() : 0);
     }
 
     /** Sets the visibility of the icon's title text */
@@ -681,6 +865,7 @@ public class FolderIcon extends FrameLayout implements FloatingIconViewCompanion
 
     public void onItemsChanged(boolean animate) {
         updatePreviewItems(false);
+        refreshFolderPresentation();
         updateDotInfo();
         setContentDescription(getAccessiblityTitle(mInfo.title));
         updatePreviewItems(animate);
@@ -779,6 +964,9 @@ public class FolderIcon extends FrameLayout implements FloatingIconViewCompanion
             title = getContext().getString(R.string.unnamed_folder);
         }
         int size = mInfo.getContents().size();
+        if (mInfo.isPrivacyLocked()) {
+            return getContext().getString(R.string.folder_locked_description, title);
+        }
         if (size < MAX_NUM_ITEMS_IN_PREVIEW) {
             return getContext().getString(hasDot()
                     ? R.string.folder_name_format_exact_with_dot

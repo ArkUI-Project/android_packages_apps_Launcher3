@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2025 The Android Open Source Project
+ * Modified by the ArkUI Project in 2026 to keep folder actions valid across model updates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,6 +30,7 @@ import com.android.launcher3.R
 import com.android.launcher3.dragndrop.DragController
 import com.android.launcher3.dragndrop.DragOptions
 import com.android.launcher3.model.data.ItemInfo
+import com.android.launcher3.model.data.FolderInfo
 import com.android.launcher3.util.ShortcutUtil
 import com.android.launcher3.views.ActivityContext
 
@@ -139,7 +141,8 @@ open class PopupContainer<T>(context: Context?, val originalView: View, val item
             if (
                 originalView != null &&
                     (!originalView.isAttachedToWindow ||
-                        !ShortcutUtil.supportsShortcuts(popup?.itemInfo))
+                        (popup?.itemInfo !is FolderInfo &&
+                            !ShortcutUtil.supportsShortcuts(popup?.itemInfo)))
             ) {
                 popup.animateClose()
             }

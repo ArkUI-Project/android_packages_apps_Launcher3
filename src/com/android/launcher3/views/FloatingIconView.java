@@ -271,7 +271,8 @@ public class FloatingIconView extends FrameLayout implements
      */
     public static void getLocationBoundsForView(Launcher launcher, View v, boolean isOpening,
             RectF outRect, Rect outViewBounds) {
-        boolean ignoreTransform = !isOpening;
+        // ArkUI: preview targets retain their displayed translation and scale on app return.
+        boolean ignoreTransform = !isOpening && v.getId() != R.id.folder_preview_app;
         if (v instanceof DeepShortcutView dsv) {
             v = dsv.getIconView();
             ignoreTransform = false;
