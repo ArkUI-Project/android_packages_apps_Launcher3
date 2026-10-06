@@ -53,6 +53,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.res.Configuration;
 import android.graphics.Region;
+import android.hardware.display.DisplayManager;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.os.IRemoteCallback;
@@ -127,6 +128,7 @@ import com.android.quickstep.window.RecentsWindowSwipeHandler;
 import com.android.systemui.shared.recents.ILauncherProxy;
 import com.android.systemui.shared.recents.ISystemUiProxy;
 import com.android.systemui.shared.statusbar.phone.BarTransitions;
+import com.android.systemui.shared.system.ArkWheelGestureGate;
 import com.android.systemui.shared.system.InputChannelCompat.InputEventReceiver;
 import com.android.systemui.shared.system.InputConsumerController;
 import com.android.systemui.shared.system.InputMonitorCompat;
@@ -213,6 +215,7 @@ public class TouchInteractionService extends Service {
             IDragAndDrop dragAndDrop = IDragAndDrop.Stub.asInterface(
                     bundle.getBinder(IDragAndDrop.DESCRIPTOR));
             MAIN_EXECUTOR.execute(() -> executeForTouchInteractionService(tis -> {
+                tis.mArkWheelGestureGate.clearRegions();
                 SystemUiProxy.INSTANCE.get(tis).setProxy(proxy, pip,
                         bubbles, splitscreen, onehanded, shellTransitions, startingWindow,
                         recentTasks, launcherUnlockAnimationController, backAnimation, desktopMode,
@@ -369,6 +372,14 @@ public class TouchInteractionService extends Service {
 
         @BinderThread
         @Override
+        public void onArkWheelCornerRegionChanged(int displayId, int rotation, Region region) {
+            Region copy = region == null ? new Region() : new Region(region);
+            MAIN_EXECUTOR.execute(() -> executeForTouchInteractionService(tis ->
+                    tis.mArkWheelGestureGate.setRegion(displayId, rotation, copy)));
+        }
+
+        @BinderThread
+        @Override
         public void enterStageSplitFromRunningApp(int displayId, boolean leftOrTop) {
             executeForTouchInteractionService(tis -> {
                 BaseContainerInterface<?, ?> containerInterface = tis.mOverviewComponentObserver
@@ -392,6 +403,8 @@ public class TouchInteractionService extends Service {
         @BinderThread
         @Override
         public void onDisplayRemoved(int displayId) {
+            MAIN_EXECUTOR.execute(() -> executeForTouchInteractionService(tis ->
+                    tis.mArkWheelGestureGate.removeDisplay(displayId)));
             executeForTouchInteractionService(tis -> {
                 tis.mSystemDecorationChangeObserver.notifyOnDisplayRemoved(displayId);
             });
@@ -489,6 +502,8 @@ public class TouchInteractionService extends Service {
             // Run everything in the same main thread block to ensure the cleanup happens before
             // sending the reply.
             MAIN_EXECUTOR.execute(() -> {
+                // The input monitor remains alive here; retain an owned stream until its end.
+                executeForTouchInteractionService(tis -> tis.mArkWheelGestureGate.clearRegions());
                 executeForTaskbarManager(TaskbarManager::destroy);
                 try {
                     reply.sendResult(null);
@@ -740,6 +755,10 @@ public class TouchInteractionService extends Service {
     private ActiveTrackpadList mTrackpadsConnected;
 
     private final SparseArray<NavigationMode> mGestureStartNavMode = new SparseArray<>();
+    private final ArkWheelGestureGate mArkWheelGestureGate = new ArkWheelGestureGate();
+    private final Runnable mArkWheelProxyStateListener = () -> {
+        if (!SystemUiProxy.INSTANCE.get(this).isActive()) mArkWheelGestureGate.clearRegions();
+    };
 
     private DesktopAppLaunchTransitionManager mDesktopAppLaunchTransitionManager;
 
@@ -760,6 +779,7 @@ public class TouchInteractionService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
+        SystemUiProxy.INSTANCE.get(this).addOnStateChangeListener(mArkWheelProxyStateListener);
         Log.d(TAG, "onCreate: user=" + getUserId()
                 + " instance=" + System.identityHashCode(this));
         // Initialize anything here that is needed in direct boot mode.
@@ -1004,6 +1024,8 @@ public class TouchInteractionService extends Service {
 
     @Override
     public void onDestroy() {
+        SystemUiProxy.INSTANCE.get(this).removeOnStateChangeListener(mArkWheelProxyStateListener);
+        mArkWheelGestureGate.clear();
         Log.d(TAG, "onDestroy: user=" + getUserId()
                 + " instance=" + System.identityHashCode(this));
         if (LockedUserState.get(this).isUserUnlocked()) {
@@ -1047,6 +1069,7 @@ public class TouchInteractionService extends Service {
         if (isOn) {
             return;
         }
+        mArkWheelGestureGate.clearRegions();
         long currentTime = SystemClock.uptimeMillis();
         MotionEvent cancelEvent = MotionEvent.obtain(
                 currentTime, currentTime, ACTION_CANCEL, 0f, 0f, 0);
@@ -1064,6 +1087,18 @@ public class TouchInteractionService extends Service {
 
         TestLogging.recordMotionEvent(
                 TestProtocol.SEQUENCE_TIS, "TouchInteractionService.onInputEvent", event);
+
+        int rotation = -1;
+        if (event.getActionMasked() == ACTION_DOWN
+                && event.isFromSource(InputDevice.SOURCE_TOUCHSCREEN)) {
+            Display display = getSystemService(DisplayManager.class).getDisplay(displayId);
+            if (display != null) rotation = display.getRotation();
+        }
+        if (mArkWheelGestureGate.onMotionEvent(event, rotation)) {
+            // No-op for this whole stream, before orientation transforms or navigation startup.
+            // Leave the previous consumer and any settling recents animation untouched.
+            return;
+        }
 
         if (!LockedUserState.get(this).isUserUnlocked()) {
             ActiveGestureProtoLogProxy.logOnInputEventUserLocked(displayId);
