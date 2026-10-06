@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2021 The Android Open Source Project
+ * Copyright (C) 2026 The ArkUI Project (frosted widget surfaces)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -61,6 +62,7 @@ public abstract class BaseLauncherAppWidgetHostView extends NavigableAppWidgetHo
     };
 
     private boolean mIsCornerRadiusEnforced;
+    private final FrostedWidgetBackground mFrostedBackground;
 
     public BaseLauncherAppWidgetHostView(Context context) {
         super(context);
@@ -70,6 +72,7 @@ public abstract class BaseLauncherAppWidgetHostView extends NavigableAppWidgetHo
 
         mInflater = LayoutInflater.from(context);
         mEnforcedCornerRadius = RoundedCornerEnforcement.computeEnforcedRadius(getContext());
+        mFrostedBackground = new FrostedWidgetBackground(this);
     }
 
     @Override
@@ -93,6 +96,7 @@ public abstract class BaseLauncherAppWidgetHostView extends NavigableAppWidgetHo
             post(this::switchToErrorView);
         }
 
+        mFrostedBackground.apply();
         enforceRoundedCorners();
     }
 

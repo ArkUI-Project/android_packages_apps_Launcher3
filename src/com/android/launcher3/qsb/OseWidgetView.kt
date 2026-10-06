@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2025 The Android Open Source Project
+ * Copyright (C) 2026 The ArkUI Project (frosted search fallback)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -31,10 +32,12 @@ import com.android.launcher3.LauncherSettings.Favorites
 import com.android.launcher3.R
 import com.android.launcher3.Utilities
 import com.android.launcher3.dagger.LauncherComponentProvider.appComponent
+import com.android.launcher3.graphics.FrostedSurfaceDrawable
 import com.android.launcher3.model.data.ItemInfo
 import com.android.launcher3.model.data.LauncherAppWidgetInfo
 import com.android.launcher3.util.Executors.MAIN_EXECUTOR
 import com.android.launcher3.util.RunnableList
+import com.android.launcher3.util.Themes
 import com.android.launcher3.views.ActivityContext
 import com.android.launcher3.views.OptionsPopupView
 import com.android.launcher3.views.OptionsPopupView.OptionItem
@@ -103,6 +106,13 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
 
     override fun getErrorView(): View =
         View.inflate(context, R.layout.ose_default_layout, null).apply {
+            foreground = background
+            background = FrostedSurfaceDrawable(
+                this,
+                Themes.getAttrColor(context, R.attr.folderBackgroundColor),
+                28 * resources.displayMetrics.density,
+            )
+            clipToOutline = true
             setOnClickListener {
                 val oseManager = context.appComponent.getOseManager()
                 val oseInfo = oseManager.oseInfo.value

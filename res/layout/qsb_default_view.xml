@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
      Copyright (C) 2016 The Android Open Source Project
+     Copyright (C) 2026 The ArkUI Project (frosted search surface)
 
      Licensed under the Apache License, Version 2.0 (the "License");
      you may not use this file except in compliance with the License.
@@ -18,13 +19,12 @@
              android:layout_width="match_parent"
              android:layout_height="match_parent">
 
-    <LinearLayout
+    <com.android.launcher3.qsb.FrostedSearchView
         android:layout_width="match_parent"
         android:layout_height="48dp"
         android:layout_margin="8dp"
         android:layout_gravity="center_vertical"
-        android:background="@drawable/round_rect_primary"
-        android:elevation="2dp"
+        android:elevation="0dp"
         android:orientation="horizontal">
 
         <TextView
@@ -50,5 +50,5 @@
             android:contentDescription="@string/gadget_setup_text"
             android:padding="8dp"
             android:background="?android:attr/selectableItemBackground" />
-    </LinearLayout>
+    </com.android.launcher3.qsb.FrostedSearchView>
 </FrameLayout>

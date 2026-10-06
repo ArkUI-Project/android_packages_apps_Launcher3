@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2016 The Android Open Source Project
+ * Copyright (C) 2026 The ArkUI Project (frosted search widgets)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,6 +27,7 @@ import android.widget.RemoteViews;
 import com.android.launcher3.Launcher;
 import com.android.launcher3.R;
 import com.android.launcher3.widget.NavigableAppWidgetHostView;
+import com.android.launcher3.widget.FrostedWidgetBackground;
 
 /**
  * Appwidget host view with QSB specific logic.
@@ -34,11 +36,13 @@ public class QsbWidgetHostView extends NavigableAppWidgetHostView {
 
     @ViewDebug.ExportedProperty(category = "launcher")
     private int mPreviousOrientation;
+    private final FrostedWidgetBackground mFrostedBackground;
 
     public QsbWidgetHostView(Context context) {
         super(context);
         setFocusable(true);
         setBackgroundResource(R.drawable.qsb_host_view_focus_bg);
+        mFrostedBackground = new FrostedWidgetBackground(this);
     }
 
     @Override
@@ -64,6 +68,7 @@ public class QsbWidgetHostView extends NavigableAppWidgetHostView {
     protected void onLayout(boolean changed, int left, int top, int right, int bottom) {
         try {
             super.onLayout(changed, left, top, right, bottom);
+            mFrostedBackground.apply();
         } catch (final RuntimeException e) {
             // Update the widget with 0 Layout id, to reset the view to error view.
             post(() -> updateAppWidget(

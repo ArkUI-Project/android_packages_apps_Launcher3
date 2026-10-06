@@ -1,0 +1,16 @@
+// Copyright (C) 2026 The ArkUI Project
+// SPDX-License-Identifier: Apache-2.0
+package {
+    default_applicable_licenses: ["Android-Apache-2.0"],
+}
+
+android_test {
+    name: "ArkFrostedWidgetTests",
+    srcs: ["src/**/*.java"],
+    manifest: "AndroidManifest.xml",
+    instrumentation_for: "Launcher3QuickStep",
+    platform_apis: true,
+    static_kotlin_stdlib: false,
+    libs: ["android.test.base.stubs.system", "android.test.runner.stubs.system"],
+    test_suites: ["device-tests"],
+}
