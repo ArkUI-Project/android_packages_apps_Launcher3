@@ -98,6 +98,10 @@ class ScalingWorkspaceRevealAnim(
         val previousScale = workspace.scaleX
         val previousWorkspaceAlpha = workspace.alpha
         val previousHotseatAlpha = hotseat.alpha
+        // Alpha can remain at one behind an opaque app. Only an active content animation
+        // supplies a scale worth continuing; otherwise iOS must start enlarged to rebound.
+        val continuingScale =
+            workspace.getTag(com.android.app.animation.R.id.ongoing_animation) is Animator
         // Make sure the starting state is right for the animation.
         val setupConfig = StateAnimationConfig()
         setupConfig.animFlags = SKIP_OVERVIEW.or(SKIP_DEPTH_CONTROLLER).or(SKIP_SCRIM)
@@ -122,7 +126,7 @@ class ScalingWorkspaceRevealAnim(
         Animations.cancelOngoingAnimation(hotseat)
 
         val fromSize =
-            if (homeWasVisible) {
+            if (homeWasVisible && (!motion.isIos || continuingScale)) {
                 previousScale
             } else {
                 motion.workspaceScale

@@ -719,7 +719,11 @@ public class QuickstepTransitionManager implements OnDeviceProfileChangeListener
                 // TODO(b/367591368): ideally these animations would be refactored to be
                 //  controlled centrally so each instances doesn't need to care about this
                 //  coordination.
-                float[] scale = new float[]{view.getScaleX(), scales[1]};
+                boolean continuingScale = view.getTag(
+                        com.android.app.animation.R.id.ongoing_animation) instanceof Animator;
+                float startScale = motion.isIos && !isAppOpening && !continuingScale
+                        ? motion.workspaceScale : view.getScaleX();
+                float[] scale = new float[]{startScale, scales[1]};
 
                 // Cancel any ongoing animations. This is necessary to avoid a conflict between
                 // e.g. the unfinished animation triggered when closing an app back to Home and

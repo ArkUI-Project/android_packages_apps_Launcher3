@@ -168,12 +168,17 @@ public final class DesktopAnimationSettings {
     }
 
     private static float iosWorkspaceProgress(float time) {
-        // A small, damped settle of the enlarged desktop after the icon has landed.
+        // Let the desktop pass its resting size, rebound, then settle as the app lands.
+        // The old spring peaked before the desktop became sharp enough to see it.
         if (time <= 0f) return 0f;
         if (time >= 1f) return 1f;
-        double end = 1 - Math.exp(-8) * (Math.cos(10) + .8 * Math.sin(10));
-        return (float) ((1 - Math.exp(-8 * time)
-                * (Math.cos(10 * time) + .8 * Math.sin(10 * time))) / end);
+        if (time < .60f) return smoothStep(time / .60f) * 1.28f;
+        if (time < .82f) return 1.28f - smoothStep((time - .60f) / .22f) * .35f;
+        return .93f + smoothStep((time - .82f) / .18f) * .07f;
+    }
+
+    private static float smoothStep(float time) {
+        return time * time * (3f - 2f * time);
     }
 
     private static Interpolator curve(Map<String, ?> prefs, String prefix) {
@@ -185,8 +190,8 @@ public final class DesktopAnimationSettings {
     /** Raw timeline progress, independent of the window's eased size and handoff velocity. */
     public float blurProgress(float time, boolean opening, long duration) {
         if (isIos && !opening) {
-            // Keep the desktop defocused through the card-to-icon handoff, then reveal detail.
-            float p = Utilities.boundToRange((time - blurExitStart) / .72f, 0f, 1f);
+            // Reveal detail before the desktop rebounds, while the window still settles.
+            float p = Utilities.boundToRange((time - blurExitStart) / .53f, 0f, 1f);
             return p * p * (3f - 2f * p);
         }
         float p = opening ? time * duration / blurEnterDuration
