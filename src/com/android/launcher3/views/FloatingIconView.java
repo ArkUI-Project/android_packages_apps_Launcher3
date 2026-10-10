@@ -30,6 +30,7 @@ import static com.android.launcher3.views.FloatingIconViewCompanion.setPropertie
 import android.animation.Animator;
 import android.content.Context;
 import android.graphics.Canvas;
+import android.graphics.Matrix;
 import android.graphics.Path;
 import android.graphics.Rect;
 import android.graphics.RectF;
@@ -53,6 +54,7 @@ import com.android.launcher3.BubbleTextView;
 import com.android.launcher3.DeviceProfile;
 import com.android.launcher3.InsettableFrameLayout;
 import com.android.launcher3.Launcher;
+import com.android.launcher3.anim.IosWindowShape;
 import com.android.launcher3.R;
 import com.android.launcher3.Utilities;
 import com.android.launcher3.dragndrop.DragLayer;
@@ -116,6 +118,9 @@ public class FloatingIconView extends FrameLayout implements
     private Runnable mFastFinishRunnable;
 
     private float mIconOffsetY;
+    private final IosWindowShape mIosShape = new IosWindowShape();
+    private final Matrix mIosDeformation = new Matrix();
+    private final RectF mIosBounds = new RectF();
 
     public FloatingIconView(Context context) {
         this(context, null);
@@ -198,6 +203,14 @@ public class FloatingIconView extends FrameLayout implements
         setTranslationX(getTranslationX() + pivotX * (getScaleX() - 1f));
         setTranslationY(getTranslationY() + pivotY * (getScaleY() - 1f));
         setRotation(degrees);
+    }
+
+    /** Keep the icon's content and outline on the same perspective plane as the app card. */
+    public void setAppDeformation(float amount, RectF bounds) {
+        mIosBounds.set(0f, 0f, bounds.width() / Math.max(.001f, getScaleX()),
+                bounds.height() / Math.max(.001f, getScaleY()));
+        mIosDeformation.set(mIosShape.matrix(mIosBounds, amount));
+        invalidate();
     }
 
     /**
@@ -498,10 +511,13 @@ public class FloatingIconView extends FrameLayout implements
 
     @Override
     protected void dispatchDraw(Canvas canvas) {
+        int save = canvas.save();
+        canvas.concat(mIosDeformation);
         super.dispatchDraw(canvas);
         if (mBadge != null) {
             mBadge.draw(canvas);
         }
+        canvas.restoreToCount(save);
     }
 
     /**
@@ -721,6 +737,7 @@ public class FloatingIconView extends FrameLayout implements
     }
 
     private void recycle() {
+        mIosDeformation.reset();
         setRotation(0);
         setPivotX(0);
         setPivotY(0);

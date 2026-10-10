@@ -135,14 +135,14 @@ class ScalingWorkspaceRevealAnim(
             WORKSPACE_SCALE_PROPERTY_FACTORY[SCALE_INDEX_WORKSPACE_STATE],
             fromSize,
             MAX_SIZE,
-            motion.homeInterpolator,
+            motion.workspaceHomeInterpolator,
         )
         animation.addFloat(
             hotseat,
             HOTSEAT_SCALE_PROPERTY_FACTORY[SCALE_INDEX_WORKSPACE_STATE],
             fromSize,
             MAX_SIZE,
-            motion.homeInterpolator,
+            motion.workspaceHomeInterpolator,
         )
 
         if (playAlphaReveal) {

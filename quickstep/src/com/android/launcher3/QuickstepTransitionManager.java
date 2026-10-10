@@ -133,6 +133,7 @@ import com.android.launcher3.DeviceProfile.OnDeviceProfileChangeListener;
 import com.android.launcher3.LauncherAnimationRunner.RemoteAnimationFactory;
 import com.android.launcher3.anim.AnimationSuccessListener;
 import com.android.launcher3.anim.DesktopAnimationSettings;
+import com.android.launcher3.anim.IosWindowShape;
 import com.android.launcher3.anim.WindowMotion;
 import com.android.launcher3.anim.AnimatorListeners;
 import com.android.launcher3.compat.AccessibilityManagerCompat;
@@ -161,6 +162,7 @@ import com.android.quickstep.util.CrossDisplayMoveTransition;
 import com.android.quickstep.util.LandscapeAppAnimation;
 import com.android.quickstep.util.AppWindowAnimationState;
 import com.android.quickstep.util.WindowAnimationSnapshot;
+import com.android.quickstep.util.IosWindowDeformation;
 import com.android.quickstep.util.MultiValueUpdateListener;
 import com.android.quickstep.util.RectFSpringAnim;
 import com.android.quickstep.util.RectFSpringAnim.DefaultSpringConfig;
@@ -698,6 +700,7 @@ public class QuickstepTransitionManager implements OnDeviceProfileChangeListener
             viewsToAnimate.add(mLauncher.getWorkspace());
 
             Hotseat hotseat = mLauncher.getHotseat();
+            mLauncher.getWorkspace().setPivotToScaleWithSelf(hotseat);
             // Do not scale hotseat as a whole when taskbar is present, and scale QSB only if it's
             // not inline.
             if (mDeviceProfile.isTaskbarPresent) {
@@ -727,7 +730,8 @@ public class QuickstepTransitionManager implements OnDeviceProfileChangeListener
 
                 ObjectAnimator scaleAnim = ObjectAnimator.ofFloat(view, SCALE_PROPERTY, scale)
                         .setDuration(isAppOpening ? motion.openDuration : motion.homeDuration);
-                scaleAnim.setInterpolator(isAppOpening ? motion.interpolator : motion.homeInterpolator);
+                scaleAnim.setInterpolator(isAppOpening ? motion.workspaceOpenInterpolator
+                        : motion.workspaceHomeInterpolator);
                 launcherAnimator.play(scaleAnim);
             });
 
@@ -915,6 +919,10 @@ public class QuickstepTransitionManager implements OnDeviceProfileChangeListener
                 ? new WindowAnimationSnapshot(mDragLayer, target.leash, fullWindowCrop, motionState,
                         SystemBarFollowAnimation.getSurface(openingTargets, target))
                 : null;
+        final IosWindowDeformation deformation = motion.isIos && snapshot != null
+                && rotationChange == 0 && landscapeRotation == 0f
+                ? new IosWindowDeformation(mDragLayer, target.leash, fullWindowCrop,
+                        motion.openDuration) : null;
         final Matrix windowToHome = new Matrix();
         windowToHome.setRotate(-90f * rotationChange);
         if (rotationChange == 1) {
@@ -973,6 +981,7 @@ public class QuickstepTransitionManager implements OnDeviceProfileChangeListener
             public void onAnimationCancel(Animator animation) {
                 if (mFinished) return;
                 surfaceApplier.cancelPendingTransactions();
+                if (deformation != null) deformation.close();
                 if (!motionState.isGestureOwned()
                         && continueOpening[0] != null && lastOpeningProgress[0] > 0f) {
                     continueOpening[0].run();
@@ -1003,6 +1012,7 @@ public class QuickstepTransitionManager implements OnDeviceProfileChangeListener
                 floatingView.onAnimationEnd(animation);
                 if (!motionState.isGestureOwned()) motionState.finish();
                 if (snapshot != null) snapshot.onSourceFinished();
+                if (deformation != null) deformation.close();
                 mLauncher.getDepthController().endAppTransition(appAnimator);
                 if (v instanceof BubbleTextView) {
                     ((BubbleTextView) v).setStayPressed(false);
@@ -1298,9 +1308,19 @@ public class QuickstepTransitionManager implements OnDeviceProfileChangeListener
                                         -landscapeRotation * (1f - landscapeProgress),
                                         floatingIconBounds);
                             }
+                            floatingView.setAppDeformation(deformation == null ? 0f
+                                    : IosWindowShape.amount(percent, openness, true),
+                                    floatingIconBounds);
+                            float deformationAlpha = 0f;
+                            if (deformation != null) {
+                                snapshotMatrix.setConcat(windowToHome, matrix);
+                                deformationAlpha = deformation.update(snapshotMatrix, crop,
+                                        windowRadius, 1f - mIconAlpha.value, floatingIconBounds,
+                                        percent, openness, true);
+                            }
                             builder.setMatrix(matrix)
                                     .setWindowCrop(crop)
-                                    .setAlpha(1f - mIconAlpha.value)
+                                    .setAlpha((1f - mIconAlpha.value) * (1f - deformationAlpha))
                                     .setCornerRadius(windowRadius)
                                     .setShadowRadius(mShadowRadius.value);
                         }
@@ -1913,6 +1933,11 @@ public class QuickstepTransitionManager implements OnDeviceProfileChangeListener
                     float iconAlpha = 1f - motion.windowAlpha(closeProgress);
                     finalFloatingIconView.update(iconAlpha, currentRectF, progress,
                             windowAlphaThreshold, getCornerRadius(progress), false);
+                    finalFloatingIconView.setAppDeformation(motion.isIos
+                                    && landscapeRotation == 0f
+                                    ? IosWindowShape.amount(anim.getTimelineProgress(),
+                                            1f - closeProgress, false) : 0f,
+                            currentRectF);
                     if (landscapeRotation != 0f) {
                         finalFloatingIconView.setAppRotation(-landscapeRotation
                                 * (1f - motion.rotationProgress(closeProgress)),
@@ -2676,6 +2701,7 @@ public class QuickstepTransitionManager implements OnDeviceProfileChangeListener
         private final boolean mUseMotion;
         private final RectFSpringAnim mWindowAnimation;
         private final @Nullable WindowAnimationSnapshot mSnapshot;
+        private final @Nullable IosWindowDeformation mDeformation;
         private final @Nullable RemoteAnimationTarget mSnapshotTarget;
         private final Matrix mWindowToHome = new Matrix();
         private final Matrix mSnapshotMatrix = new Matrix();
@@ -2772,6 +2798,11 @@ public class QuickstepTransitionManager implements OnDeviceProfileChangeListener
             } else {
                 mSnapshot = null;
             }
+            mDeformation = motion.isIos && mSnapshot != null && landscapeRotation == 0f
+                    && closingTarget.rotationChange == 0
+                    ? new IosWindowDeformation(mDragLayer, closingTarget.leash,
+                            new Rect(0, 0, mWindowOriginalBounds.width(),
+                                    mWindowOriginalBounds.height()), motion.homeDuration) : null;
         }
 
         public float getCornerRadius(float progress) {
@@ -2853,9 +2884,18 @@ public class QuickstepTransitionManager implements OnDeviceProfileChangeListener
                                 currentRectF, 1f - closeProgress, getCornerRadius(progress),
                                 mVerticalCropAnchor);
                     } else {
+                        float deformationAlpha = 0f;
+                        if (mDeformation != null) {
+                            mSnapshotMatrix.setConcat(mWindowToHome, mMatrix);
+                            deformationAlpha = mDeformation.update(mSnapshotMatrix, mTmpRect,
+                                    getCornerRadius(progress) / scale,
+                                    getWindowAlpha(closeProgress), currentRectF,
+                                    mWindowAnimation.getTimelineProgress(),
+                                    1f - closeProgress, false);
+                        }
                         builder.setMatrix(mMatrix)
                                 .setWindowCrop(mTmpRect)
-                                .setAlpha(getWindowAlpha(closeProgress))
+                                .setAlpha(getWindowAlpha(closeProgress) * (1f - deformationAlpha))
                                 .setCornerRadius(getCornerRadius(progress) / scale);
                     }
                 } else if (target.mode == MODE_OPENING) {
@@ -2877,15 +2917,18 @@ public class QuickstepTransitionManager implements OnDeviceProfileChangeListener
             mMotionState.finish();
             mLauncher.getDepthController().endAppTransition(this);
             if (mSnapshot != null) mSnapshot.onSourceFinished();
+            if (mDeformation != null) mDeformation.close();
         }
 
         @Override
         public void onAnimationCancel(Animator animation) {
+            if (mDeformation != null) mDeformation.close();
             mMotionState.cancel();
         }
 
         @Override
         public void onCancel() {
+            if (mDeformation != null) mDeformation.close();
             mMotionState.cancel();
             mLauncher.getDepthController().endAppTransition(this);
         }

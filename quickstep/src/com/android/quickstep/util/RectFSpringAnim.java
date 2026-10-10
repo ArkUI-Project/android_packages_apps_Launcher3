@@ -418,7 +418,7 @@ public class RectFSpringAnim extends ReleaseCheck {
                 mMotion.homeSizeInterpolator, mMotion.sizeStiffness, mMotion.sizeDamping);
         mHomeWidth = new WindowMotion(0f, 1f,
                 Float.isFinite(mInitialWidthVelocity) ? mInitialWidthVelocity : sizeVelocity,
-                mMotion.homeDuration, mMotion.homeSizeInterpolator,
+                mMotion.homeWidthDuration, mMotion.homeSizeInterpolator,
                 mMotion.sizeStiffness, mMotion.sizeDamping);
         mHomeAnimator = ValueAnimator.ofFloat(0f, 1f);
         mHomeAnimator.setDuration(mMotion.homeDuration);

@@ -38,6 +38,7 @@ import androidx.annotation.Nullable;
 
 import com.android.app.animation.Interpolators;
 import com.android.launcher3.LauncherState;
+import com.android.launcher3.anim.IosWindowShape;
 import com.android.launcher3.anim.AnimatorPlaybackController;
 import com.android.launcher3.model.data.ItemInfo;
 import com.android.launcher3.statehandlers.DesktopVisibilityController;
@@ -221,6 +222,10 @@ public class LauncherSwipeHandlerV2 extends AbsSwipeUpHandler<
                         : Interpolators.clampToProgress(progress, 0f, windowAlphaThreshold);
                 floatingIconView.update(iconAlpha, currentRect, progress, windowAlphaThreshold,
                         radius, false, overlayAlpha);
+                floatingIconView.setAppDeformation(mMotion.isIos && mLandscapeRotation == 0f
+                                ? IosWindowShape.amount(mSiblingAnimation.getTimelineProgress(),
+                                        1f - progress, false) : 0f,
+                        currentRect);
                 if (mLandscapeRotation != 0f) {
                     floatingIconView.setAppRotation(-mLandscapeRotation
                             * (1f - mMotion.rotationProgress(progress)),

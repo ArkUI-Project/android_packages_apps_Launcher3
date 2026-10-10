@@ -19,6 +19,28 @@ import java.util.Map;
 /** One validated schema for the Settings bridge and immutable, per-animation motion snapshots. */
 public final class DesktopAnimationSettings {
     public static final String PREFIX = "pref_motion_";
+    public static final int STYLE_CUSTOM = 0;
+    public static final int STYLE_IOS = 1;
+    public static final Parameter STYLE = new Parameter("style", STYLE_IOS, 0, 1, 1, "");
+
+    // App/home values only. Switching styles never overwrites the user's tuning or recents.
+    private static final Map<String, Integer> IOS_VALUES = Map.ofEntries(
+            Map.entry("open_duration", 420), Map.entry("home_duration", 460),
+            Map.entry("curve_x1", 18), Map.entry("curve_y1", 90),
+            Map.entry("curve_x2", 25), Map.entry("curve_y2", 100),
+            Map.entry("height_curve_x1", 30), Map.entry("height_curve_y1", 70),
+            Map.entry("height_curve_x2", 18), Map.entry("height_curve_y2", 100),
+            Map.entry("home_curve_x1", 28), Map.entry("home_curve_y1", 40),
+            Map.entry("home_curve_x2", 16), Map.entry("home_curve_y2", 100),
+            Map.entry("size_curve_x1", 25), Map.entry("size_curve_y1", 5),
+            Map.entry("size_curve_x2", 20), Map.entry("size_curve_y2", 100),
+            Map.entry("home_height_duration", 58),
+            Map.entry("position_stiffness", 700), Map.entry("position_damping", 90),
+            Map.entry("size_stiffness", 700), Map.entry("size_damping", 100),
+            Map.entry("corner_start", 0), Map.entry("fade_start", 82),
+            Map.entry("icon_fade_duration", 45), Map.entry("workspace_scale", 112),
+            Map.entry("blur_radius", 20), Map.entry("blur_enter_duration", 100),
+            Map.entry("blur_exit_start", 12), Map.entry("blur_recovery", 180));
     private static SharedPreferences sPreferences;
     private static DesktopAnimationSettings sSnapshot;
     // SharedPreferences keeps a weak listener reference; keep the listener for the process lifetime.
@@ -71,7 +93,7 @@ public final class DesktopAnimationSettings {
             new Parameter("corner_start", 65, 0, 90, 1, "%"),
             new Parameter("fade_start", 85, 50, 95, 1, "%"),
             new Parameter("icon_fade_duration", 50, 10, 150, 5, "ms"),
-            new Parameter("workspace_scale", 90, 75, 100, 1, "%"),
+            new Parameter("workspace_scale", 90, 75, 120, 1, "%"),
             new Parameter("blur_radius", 24, 0, 60, 1, "dp"),
             new Parameter("blur_enter_duration", 120, 30, 300, 10, "ms"),
             new Parameter("blur_exit_start", 5, 0, 70, 1, "%"),
@@ -84,7 +106,8 @@ public final class DesktopAnimationSettings {
     };
 
     public final long openDuration, recentsDuration, homeDuration, iconFadeDuration, blurRecovery;
-    public final long homeHeightDuration, blurEnterDuration, swipeTargetFade;
+    public final long homeHeightDuration, homeWidthDuration, blurEnterDuration, swipeTargetFade;
+    public final boolean isIos;
     public final float positionStiffness, positionDamping, sizeStiffness, sizeDamping;
     public final float rotationResponse, cornerStart, fadeStart, workspaceScale;
     public final float stackSpacing, stackScaleStep;
@@ -92,19 +115,28 @@ public final class DesktopAnimationSettings {
     public final int blurRadius;
     public final Interpolator interpolator;
     public final Interpolator openingHeightInterpolator, homeInterpolator, homeSizeInterpolator;
+    public final Interpolator workspaceOpenInterpolator, workspaceHomeInterpolator;
     private static final Map<String, Parameter> PARAMETERS_BY_KEY = createParameterIndex();
 
     private static Map<String, Parameter> createParameterIndex() {
         Map<String, Parameter> parameters = new HashMap<>();
         for (Parameter parameter : PARAMETERS) parameters.put(parameter.key(), parameter);
+        parameters.put(STYLE.key(), STYLE);
         return Map.copyOf(parameters);
     }
 
     private DesktopAnimationSettings(Map<String, ?> prefs) {
+        isIos = STYLE.read(prefs) == STYLE_IOS;
+        if (isIos) {
+            Map<String, Object> effective = new HashMap<>(prefs);
+            IOS_VALUES.forEach((name, value) -> effective.put(PREFIX + name, value));
+            prefs = effective;
+        }
         openDuration = value(prefs, "open_duration");
         recentsDuration = value(prefs, "recents_duration");
         homeDuration = value(prefs, "home_duration");
         homeHeightDuration = Math.max(1, homeDuration * value(prefs, "home_height_duration") / 100);
+        homeWidthDuration = isIos ? homeDuration * 68 / 100 : homeDuration;
         iconFadeDuration = value(prefs, "icon_fade_duration");
         blurRecovery = value(prefs, "blur_recovery");
         blurEnterDuration = value(prefs, "blur_enter_duration");
@@ -129,6 +161,19 @@ public final class DesktopAnimationSettings {
         openingHeightInterpolator = curve(prefs, "height_curve_");
         homeInterpolator = curve(prefs, "home_curve_");
         homeSizeInterpolator = curve(prefs, "size_curve_");
+        workspaceOpenInterpolator = isIos ? new PathInterpolator(.2f, 0f, .2f, 1f)
+                : interpolator;
+        workspaceHomeInterpolator = isIos ? DesktopAnimationSettings::iosWorkspaceProgress
+                : homeInterpolator;
+    }
+
+    private static float iosWorkspaceProgress(float time) {
+        // A small, damped settle of the enlarged desktop after the icon has landed.
+        if (time <= 0f) return 0f;
+        if (time >= 1f) return 1f;
+        double end = 1 - Math.exp(-8) * (Math.cos(10) + .8 * Math.sin(10));
+        return (float) ((1 - Math.exp(-8 * time)
+                * (Math.cos(10 * time) + .8 * Math.sin(10 * time))) / end);
     }
 
     private static Interpolator curve(Map<String, ?> prefs, String prefix) {
@@ -139,6 +184,11 @@ public final class DesktopAnimationSettings {
 
     /** Raw timeline progress, independent of the window's eased size and handoff velocity. */
     public float blurProgress(float time, boolean opening, long duration) {
+        if (isIos && !opening) {
+            // Keep the desktop defocused through the card-to-icon handoff, then reveal detail.
+            float p = Utilities.boundToRange((time - blurExitStart) / .72f, 0f, 1f);
+            return p * p * (3f - 2f * p);
+        }
         float p = opening ? time * duration / blurEnterDuration
                 : (time - blurExitStart) / (1f - blurExitStart);
         p = Utilities.boundToRange(p, 0f, 1f);
@@ -183,6 +233,9 @@ public final class DesktopAnimationSettings {
             spec.putString("unit", parameter.unit());
             result.putBundle(parameter.key(), spec);
         }
+        Bundle style = new Bundle();
+        style.putInt("value", STYLE.read(values));
+        result.putBundle(STYLE.key(), style);
         return result;
     }
 
@@ -192,7 +245,8 @@ public final class DesktopAnimationSettings {
     }
 
     public float cornerProgress(float progress) {
-        float p = Utilities.boundToRange((progress - cornerStart) / (1f - cornerStart), 0f, 1f);
+        float p = Utilities.boundToRange(isIos ? progress / .18f
+                : (progress - cornerStart) / (1f - cornerStart), 0f, 1f);
         return p * p * (3f - 2f * p);
     }
 

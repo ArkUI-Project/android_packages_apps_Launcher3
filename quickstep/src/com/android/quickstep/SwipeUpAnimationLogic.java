@@ -49,6 +49,7 @@ import com.android.quickstep.util.AnimatorControllerWithResistance;
 import com.android.quickstep.util.LandscapeAppAnimation;
 import com.android.quickstep.util.AppWindowAnimationState;
 import com.android.quickstep.util.WindowAnimationSnapshot;
+import com.android.quickstep.util.IosWindowDeformation;
 import com.android.launcher3.anim.DesktopAnimationSettings;
 import com.android.quickstep.util.RectFSpringAnim;
 import com.android.quickstep.util.RectFSpringAnim.DefaultSpringConfig;
@@ -470,6 +471,7 @@ public abstract class SwipeUpAnimationLogic implements
         final DesktopAnimationSettings mMotion;
         @Nullable final AppWindowAnimationState.Session mMotionState;
         @Nullable final WindowAnimationSnapshot mSnapshot;
+        @Nullable final IosWindowDeformation mDeformation;
         private final Matrix mWindowToHome = new Matrix();
         private final Matrix mSnapshotMatrix = new Matrix();
 
@@ -561,6 +563,10 @@ public abstract class SwipeUpAnimationLogic implements
             } else {
                 mSnapshot = null;
             }
+            mDeformation = mMotion.isIos && mSnapshot != null && mLandscapeRotation == 0f
+                    && mBaseMatrixRotation == 0f
+                    ? new IosWindowDeformation(host, targets.getFirstAppTarget().leash,
+                            new Rect(mCropRect), mMotion.homeDuration) : null;
         }
 
         private float updateHomeWindowGeometry(RectF currentRect, float progress) {
@@ -574,6 +580,12 @@ public abstract class SwipeUpAnimationLogic implements
                         progress, mCropRect, mMotion, mBaseMatrixRotation);
                 AppWindowAnimationState.applyVerticalCropAnchor(mMatrix, mCropRect,
                         mCropSourceHeight, mVerticalCropAnchor);
+                if (mMotion.isIos) {
+                    // These radii are in app-buffer coordinates. Bound the visible radius
+                    // so the early rounding does not turn a still-large card into a capsule.
+                    radius = Math.min(radius, Math.max(mStartRadius,
+                            Utilities.dpToPx(24) / Math.max(.001f, mMatrix.mapRadius(1f))));
+                }
                 radius = Math.min(radius, Math.min(mCropRect.width(), mCropRect.height()) / 2f);
             }
             return radius;
@@ -608,6 +620,13 @@ public abstract class SwipeUpAnimationLogic implements
                 cornerRadius = updateHomeWindowGeometry(currentRect, progress);
                 mAnimationFactory.setAppTransitionProgress(this,
                         mWindowAnimation.getTimelineProgress());
+                if (mDeformation != null) {
+                    mSnapshotMatrix.setConcat(mWindowToHome, mMatrix);
+                    float blend = mDeformation.update(mSnapshotMatrix, mCropRect, cornerRadius,
+                            alpha, currentRect, mWindowAnimation.getTimelineProgress(),
+                            getOpenness(progress), false);
+                    alpha *= 1f - blend;
+                }
                 mLocalTransformParams
                         .setTargetAlpha(alpha)
                         .setCornerRadius(cornerRadius);
@@ -732,6 +751,7 @@ public abstract class SwipeUpAnimationLogic implements
         }
 
         private void cleanUp() {
+            if (mDeformation != null) mDeformation.close();
             mAnimationFactory.endAppTransition(this);
             if (mTargetTaskView == null) {
                 return;
