@@ -226,6 +226,9 @@ class ScalingWorkspaceRevealAnim(
         val transformed = RectF()
         val transform = Matrix()
         animation.addOnFrameListener {
+            // The iOS arrival is measured against the final icon. Retargeting it on every
+            // workspace frame adds a second moving endpoint to the small settling motion.
+            if (motion.isIos) return@addOnFrameListener
             transformed.set(originalTarget)
 
             // First we scale down using the same pivot as the workspace scale, so we find the

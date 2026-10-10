@@ -1942,8 +1942,6 @@ public class QuickstepTransitionManager implements OnDeviceProfileChangeListener
                                     ? IosWindowShape.amount(anim.getTimelineProgress(),
                                             1f - closeProgress, false) : 0f,
                             currentRectF);
-                    finalFloatingIconView.setIconLandingProgress(motion.isIos
-                            ? anim.getTimelineProgress() : 0f);
                     if (landscapeRotation != 0f) {
                         finalFloatingIconView.setAppRotation(-landscapeRotation
                                 * (1f - motion.rotationProgress(closeProgress)),

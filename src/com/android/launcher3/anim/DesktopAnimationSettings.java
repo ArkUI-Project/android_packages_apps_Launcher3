@@ -25,7 +25,7 @@ public final class DesktopAnimationSettings {
 
     // App/home values only. Switching styles never overwrites the user's tuning or recents.
     private static final Map<String, Integer> IOS_VALUES = Map.ofEntries(
-            Map.entry("open_duration", 420), Map.entry("home_duration", 460),
+            Map.entry("open_duration", 420), Map.entry("home_duration", 600),
             Map.entry("curve_x1", 18), Map.entry("curve_y1", 90),
             Map.entry("curve_x2", 25), Map.entry("curve_y2", 100),
             Map.entry("height_curve_x1", 30), Map.entry("height_curve_y1", 70),
@@ -34,13 +34,13 @@ public final class DesktopAnimationSettings {
             Map.entry("home_curve_x2", 16), Map.entry("home_curve_y2", 100),
             Map.entry("size_curve_x1", 25), Map.entry("size_curve_y1", 5),
             Map.entry("size_curve_x2", 20), Map.entry("size_curve_y2", 100),
-            Map.entry("home_height_duration", 58),
+            Map.entry("home_height_duration", 100),
             Map.entry("position_stiffness", 700), Map.entry("position_damping", 90),
             Map.entry("size_stiffness", 700), Map.entry("size_damping", 100),
             Map.entry("corner_start", 0), Map.entry("fade_start", 82),
             Map.entry("icon_fade_duration", 45), Map.entry("workspace_scale", 112),
             Map.entry("blur_radius", 20), Map.entry("blur_enter_duration", 100),
-            Map.entry("blur_exit_start", 12), Map.entry("blur_recovery", 180));
+            Map.entry("blur_exit_start", 6), Map.entry("blur_recovery", 180));
     private static SharedPreferences sPreferences;
     private static DesktopAnimationSettings sSnapshot;
     // SharedPreferences keeps a weak listener reference; keep the listener for the process lifetime.
@@ -136,7 +136,7 @@ public final class DesktopAnimationSettings {
         recentsDuration = value(prefs, "recents_duration");
         homeDuration = value(prefs, "home_duration");
         homeHeightDuration = Math.max(1, homeDuration * value(prefs, "home_height_duration") / 100);
-        homeWidthDuration = isIos ? homeDuration * 68 / 100 : homeDuration;
+        homeWidthDuration = homeDuration;
         iconFadeDuration = value(prefs, "icon_fade_duration");
         blurRecovery = value(prefs, "blur_recovery");
         blurEnterDuration = value(prefs, "blur_enter_duration");
@@ -176,8 +176,8 @@ public final class DesktopAnimationSettings {
     /** Raw timeline progress, independent of the window's eased size and handoff velocity. */
     public float blurProgress(float time, boolean opening, long duration) {
         if (isIos && !opening) {
-            // Reveal detail before the returning icon lands and rebounds independently.
-            float p = Utilities.boundToRange((time - blurExitStart) / .53f, 0f, 1f);
+            // The backdrop is already clear during the icon's slow final settling.
+            float p = Utilities.boundToRange((time - blurExitStart) / .50f, 0f, 1f);
             return p * p * (3f - 2f * p);
         }
         float p = opening ? time * duration / blurEnterDuration

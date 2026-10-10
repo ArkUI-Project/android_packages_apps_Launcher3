@@ -39,6 +39,7 @@ import com.android.launcher3.DeviceProfile;
 import com.android.launcher3.R;
 import com.android.launcher3.Utilities;
 import com.android.launcher3.anim.DesktopAnimationSettings;
+import com.android.launcher3.anim.IosHomeMotion;
 import com.android.launcher3.anim.WindowMotion;
 import com.android.launcher3.util.DynamicResource;
 import com.android.quickstep.RemoteAnimationTargets.ReleaseCheck;
@@ -151,14 +152,14 @@ public class RectFSpringAnim extends ReleaseCheck {
         tail.addUpdateListener(animation -> {
             float time = (float) animation.getAnimatedValue();
             float curve = mMotion.homeInterpolator.getInterpolation(time / mMotion.homeDuration);
-            float x = mHomeX.value(time, curve), y = mHomeY.value(time, curve);
+            float x = mMotion.isIos ? mHomeX.value(time) : mHomeX.value(time, curve);
+            float y = mMotion.isIos ? mHomeY.value(time) : mHomeY.value(time, curve);
             float size = mHomeSize.value(time);
-            float width = Utilities.boundToRange(mHomeWidth.value(time), mMinimumSizeProgress, 1f);
-            float boundedSize = Utilities.boundToRange(size, mMinimumSizeProgress, 1f);
+            float width = boundSizeProgress(mHomeWidth.value(time), startWidth, endWidth);
+            float boundedSize = boundSizeProgress(size, startHeight, endHeight);
             float halfWidth = Utilities.mapRange(width, startWidth, endWidth) / 2f;
             float halfHeight = Utilities.mapRange(boundedSize, startHeight, endHeight) / 2f;
             rect.set(x - halfWidth, y - halfHeight, x + halfWidth, y + halfHeight);
-            applyIconLandingOffset(rect, time);
             listener.onUpdate(rect, Utilities.boundToRange(size, 0f, 1f));
         });
         return tail;
@@ -179,18 +180,10 @@ public class RectFSpringAnim extends ReleaseCheck {
                 : mHomeElapsed / mMotion.homeDuration, 0f, 1f);
     }
 
-    private void applyIconLandingOffset(RectF rect, float elapsed) {
-        if (mMotion == null || !mMotion.isIos) return;
-        // Retain the arrival momentum for one small overshoot, then reach the exact icon.
-        // This is part of the window trajectory; nothing starts after the icon handoff.
-        float time = Utilities.boundToRange(
-                (elapsed / mMotion.homeDuration - .76f) / .24f, 0f, 1f);
-        float phase = time < 2f / 3f ? time * 1.5f : (1f - time) * 3f;
-        float settle = phase * phase * (3f - 2f * phase);
-        rect.offset(Math.signum(mTargetRect.centerX() - mStartRect.centerX())
-                        * mTargetRect.width() * .03f * settle,
-                Math.signum(mTargetRect.centerY() - mStartRect.centerY())
-                        * mTargetRect.height() * .045f * settle);
+    private float boundSizeProgress(float progress, float start, float end) {
+        float max = mMotion != null && mMotion.isIos && start > end
+                ? 1f + end * .08f / (start - end) : 1f;
+        return Utilities.boundToRange(progress, mMinimumSizeProgress, max);
     }
 
     /** Only app/home callers opt in; split, PiP and taskbar springs retain their own tuning. */
@@ -419,10 +412,14 @@ public class RectFSpringAnim extends ReleaseCheck {
     private void startHomeAnimation(PointF velocity) {
         final boolean handoff = mHasInitialVelocity || velocity.x != 0f || velocity.y != 0f;
         mHomeX = new WindowMotion(mCurrentCenterX, mTargetRect.centerX(),
-                handoff ? velocity.x : Float.NaN, mMotion.homeDuration, mMotion.homeInterpolator,
+                handoff ? velocity.x : Float.NaN, mMotion.homeDuration,
+                mMotion.isIos ? IosHomeMotion.center(mCurrentCenterX, mTargetRect.centerX(),
+                        mTargetRect.width(), true) : mMotion.homeInterpolator,
                 mMotion.positionStiffness, mMotion.positionDamping);
         mHomeY = new WindowMotion(mCurrentY, mTargetRect.centerY(),
-                handoff ? velocity.y : Float.NaN, mMotion.homeDuration, mMotion.homeInterpolator,
+                handoff ? velocity.y : Float.NaN, mMotion.homeDuration,
+                mMotion.isIos ? IosHomeMotion.center(mCurrentY, mTargetRect.centerY(),
+                        mTargetRect.height(), false) : mMotion.homeInterpolator,
                 mMotion.positionStiffness, mMotion.positionDamping);
         float sizeVelocity = mInitialSizeVelocity;
         if (!Float.isFinite(sizeVelocity) && handoff) {
@@ -430,10 +427,14 @@ public class RectFSpringAnim extends ReleaseCheck {
                     / Math.max(1f, mStartRect.height() - mTargetRect.height());
         }
         mHomeSize = new WindowMotion(0f, 1f, sizeVelocity, mMotion.homeHeightDuration,
-                mMotion.homeSizeInterpolator, mMotion.sizeStiffness, mMotion.sizeDamping);
+                mMotion.isIos ? IosHomeMotion.height(mStartRect.height(), mTargetRect.height())
+                        : mMotion.homeSizeInterpolator,
+                mMotion.sizeStiffness, mMotion.sizeDamping);
         mHomeWidth = new WindowMotion(0f, 1f,
                 Float.isFinite(mInitialWidthVelocity) ? mInitialWidthVelocity : sizeVelocity,
-                mMotion.homeWidthDuration, mMotion.homeSizeInterpolator,
+                mMotion.homeWidthDuration,
+                mMotion.isIos ? IosHomeMotion.width(mStartRect.width(), mTargetRect.width())
+                        : mMotion.homeSizeInterpolator,
                 mMotion.sizeStiffness, mMotion.sizeDamping);
         mHomeAnimator = ValueAnimator.ofFloat(0f, 1f);
         mHomeAnimator.setDuration(mMotion.homeDuration);
@@ -441,8 +442,10 @@ public class RectFSpringAnim extends ReleaseCheck {
         mHomeAnimator.addUpdateListener(animator -> {
             mHomeElapsed = animator.getAnimatedFraction() * mMotion.homeDuration;
             float progress = mMotion.homeInterpolator.getInterpolation(animator.getAnimatedFraction());
-            mCurrentCenterX = mHomeX.value(mHomeElapsed, progress);
-            mCurrentY = mHomeY.value(mHomeElapsed, progress);
+            mCurrentCenterX = mMotion.isIos ? mHomeX.value(mHomeElapsed)
+                    : mHomeX.value(mHomeElapsed, progress);
+            mCurrentY = mMotion.isIos ? mHomeY.value(mHomeElapsed)
+                    : mHomeY.value(mHomeElapsed, progress);
             mCurrentScaleProgress = mHomeSize.value(mHomeElapsed);
             mCurrentWidthProgress = mHomeWidth.value(mHomeElapsed);
             // One frame updates position, size, rotation, icon and blur together.
@@ -520,9 +523,11 @@ public class RectFSpringAnim extends ReleaseCheck {
         if (!mOnUpdateListeners.isEmpty()) {
             float progress = Utilities.boundToRange(mCurrentScaleProgress, 0f, 1f);
             float sizeProgress = mMotion == null ? progress
-                    : Utilities.boundToRange(mCurrentScaleProgress, mMinimumSizeProgress, 1f);
+                    : boundSizeProgress(mCurrentScaleProgress,
+                            mStartRect.height(), mTargetRect.height());
             float widthProgress = mMotion == null ? sizeProgress
-                    : Utilities.boundToRange(mCurrentWidthProgress, mMinimumSizeProgress, 1f);
+                    : boundSizeProgress(mCurrentWidthProgress,
+                            mStartRect.width(), mTargetRect.width());
             float currentWidth = Utilities.mapRange(widthProgress, mStartRect.width(),
                     mTargetRect.width());
             float currentHeight = Utilities.mapRange(sizeProgress, mStartRect.height(),
@@ -547,7 +552,6 @@ public class RectFSpringAnim extends ReleaseCheck {
                             mCurrentY + currentHeight / 2);
                     break;
             }
-            applyIconLandingOffset(mCurrentRect, mHomeElapsed);
             for (OnUpdateListener onUpdateListener : mOnUpdateListeners) {
                 onUpdateListener.onUpdate(mCurrentRect, progress);
             }

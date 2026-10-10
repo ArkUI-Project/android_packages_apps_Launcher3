@@ -54,9 +54,10 @@ import com.android.launcher3.BubbleTextView;
 import com.android.launcher3.DeviceProfile;
 import com.android.launcher3.InsettableFrameLayout;
 import com.android.launcher3.Launcher;
-import com.android.launcher3.anim.IosWindowShape;
 import com.android.launcher3.R;
 import com.android.launcher3.Utilities;
+import com.android.launcher3.anim.DesktopAnimationSettings;
+import com.android.launcher3.anim.IosWindowShape;
 import com.android.launcher3.dragndrop.DragLayer;
 import com.android.launcher3.folder.FolderIcon;
 import com.android.launcher3.graphics.PreloadIconDelegate;
@@ -121,7 +122,7 @@ public class FloatingIconView extends FrameLayout implements
     private final IosWindowShape mIosShape = new IosWindowShape();
     private final Matrix mIosDeformation = new Matrix();
     private final RectF mIosBounds = new RectF();
-    private float mIconLandingScale = 1f;
+    private boolean mUseIosReturnGeometry;
 
     public FloatingIconView(Context context) {
         this(context, null);
@@ -183,7 +184,7 @@ public class FloatingIconView extends FrameLayout implements
         // the TaskView at all, we need to display this FIV regardless.
         setAlpha(isLaidOut() || taskViewDrawAlpha < 255 ? alpha : 0f);
         mClipIconView.update(rect, progress, shapeProgressStart, cornerRadius, isOpening, this,
-                mLauncher.getDeviceProfile(), taskViewDrawAlpha);
+                mLauncher.getDeviceProfile(), taskViewDrawAlpha, mUseIosReturnGeometry);
 
         // The alpha goes from 1 to 0 when progress is 0 and 0.15 respectively.
         // This value minimizes view display time while still allowing the view to fade out.
@@ -210,15 +211,7 @@ public class FloatingIconView extends FrameLayout implements
     public void setAppDeformation(float amount, RectF bounds) {
         mIosBounds.set(0f, 0f, bounds.width() / Math.max(.001f, getScaleX()),
                 bounds.height() / Math.max(.001f, getScaleY()));
-        mIosDeformation.set(mIosShape.matrix(mIosBounds, amount));
-        invalidate();
-    }
-
-    /** One small undershoot on the window's existing return clock, ending at the handoff. */
-    public void setIconLandingProgress(float time) {
-        float progress = Utilities.boundToRange((time - .54f) / .46f, 0f, 1f);
-        float compression = (float) Math.sin(Math.PI * progress);
-        mIconLandingScale = 1f - .04f * compression * compression;
+        mIosDeformation.set(mIosShape.matrix(mIosBounds, amount, mIsOpening));
         invalidate();
     }
 
@@ -522,8 +515,6 @@ public class FloatingIconView extends FrameLayout implements
     protected void dispatchDraw(Canvas canvas) {
         int save = canvas.save();
         canvas.concat(mIosDeformation);
-        canvas.scale(mIconLandingScale, mIconLandingScale,
-                mIosBounds.centerX(), mIosBounds.centerY());
         super.dispatchDraw(canvas);
         if (mBadge != null) {
             mBadge.draw(canvas);
@@ -677,6 +668,7 @@ public class FloatingIconView extends FrameLayout implements
 
         // Init properties before getting the drawable.
         view.mIsOpening = isOpening;
+        view.mUseIosReturnGeometry = !isOpening && DesktopAnimationSettings.read(launcher).isIos;
         view.mOriginalIcon = originalView;
         view.mMatchVisibilityView = visibilitySyncView;
         view.mFadeOutView = fadeOutView;
@@ -749,7 +741,7 @@ public class FloatingIconView extends FrameLayout implements
 
     private void recycle() {
         mIosDeformation.reset();
-        mIconLandingScale = 1f;
+        mUseIosReturnGeometry = false;
         setRotation(0);
         setPivotX(0);
         setPivotY(0);

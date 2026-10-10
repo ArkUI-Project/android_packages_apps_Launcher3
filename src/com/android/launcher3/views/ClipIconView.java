@@ -121,6 +121,14 @@ public class ClipIconView extends View implements ClipPathView {
      */
     public void update(RectF rect, float progress, float shapeProgressStart, float cornerRadius,
             boolean isOpening, View container, DeviceProfile dp, int taskViewDrawAlpha) {
+        update(rect, progress, shapeProgressStart, cornerRadius, isOpening, container, dp,
+                taskViewDrawAlpha, false);
+    }
+
+    /** Allow the return trajectory to pass smoothly through, and just below, the icon size. */
+    public void update(RectF rect, float progress, float shapeProgressStart, float cornerRadius,
+            boolean isOpening, View container, DeviceProfile dp, int taskViewDrawAlpha,
+            boolean followReturnBounds) {
         MarginLayoutParams lp = (MarginLayoutParams) container.getLayoutParams();
 
         float dX = mIsRtl
@@ -133,7 +141,7 @@ public class ClipIconView extends View implements ClipPathView {
         float minSize = Math.min(lp.width, lp.height);
         float scaleX = rect.width() / minSize;
         float scaleY = rect.height() / minSize;
-        float scale = Math.max(1f, Math.min(scaleX, scaleY));
+        float scale = Math.max(followReturnBounds ? .001f : 1f, Math.min(scaleX, scaleY));
         if (mTaskViewArtist != null) {
             mTaskViewArtist.taskViewDrawWidth = lp.width;
             mTaskViewArtist.taskViewDrawHeight = lp.height;
@@ -148,25 +156,32 @@ public class ClipIconView extends View implements ClipPathView {
             return;
         }
 
-        update(rect, progress, shapeProgressStart, cornerRadius, isOpening, scale, minSize, dp);
+        update(rect, progress, shapeProgressStart, cornerRadius, isOpening, scale, minSize, dp,
+                followReturnBounds);
 
         container.setPivotX(0);
         container.setPivotY(0);
-        container.setScaleX(scale);
-        container.setScaleY(scale);
+        container.setScaleX(followReturnBounds ? scaleX : scale);
+        container.setScaleY(followReturnBounds ? scaleY : scale);
 
         container.invalidate();
     }
 
     private void update(RectF rect, float progress, float shapeProgressStart, float cornerRadius,
-            boolean isOpening, float scale, float minSize, DeviceProfile dp) {
+            boolean isOpening, float scale, float minSize, DeviceProfile dp,
+            boolean followReturnBounds) {
         // shapeRevealProgress = 1 when progress = shapeProgressStart + SHAPE_PROGRESS_DURATION
         float toMax = isOpening ? 1 / SHAPE_PROGRESS_DURATION : 1f;
 
         float shapeRevealProgress = boundToRange(mapToRange(max(shapeProgressStart, progress),
                 shapeProgressStart, 1f, 0, toMax, LINEAR), 0, 1);
 
-        if (dp.getDeviceProperties().isLandscape()) {
+        if (followReturnBounds) {
+            // Morph in icon coordinates, then apply both dimensions of the return rect.
+            // A uniform scale plus an animated clip cannot represent the final width/height
+            // undershoot: its reveal path has already become the original square icon.
+            mOutline.set(0, 0, Math.round(minSize), Math.round(minSize));
+        } else if (dp.getDeviceProperties().isLandscape()) {
             mOutline.right = (int) (rect.width() / scale);
         } else {
             mOutline.bottom = (int) (rect.height() / scale);

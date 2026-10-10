@@ -115,7 +115,7 @@ public final class IosWindowDeformation extends Drawable
         mBlend = exit;
         mAppToHome.set(appToHome);
         mDeformation.set(mShape.matrix(homeRect,
-                IosWindowShape.amount(time, openness, opening) * enter));
+                IosWindowShape.amount(time, openness, opening) * enter, opening));
         mClip.rewind();
         mClip.addRoundRect(crop.left, crop.top, crop.right, crop.bottom,
                 radius, radius, Path.Direction.CW);
