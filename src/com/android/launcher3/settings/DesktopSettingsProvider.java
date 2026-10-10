@@ -45,7 +45,7 @@ public class DesktopSettingsProvider extends ContentProvider {
             Map.entry("pref_drawer_show_labels", true),
             Map.entry("pref_sleep_gesture", false),
             Map.entry("pref_landscape_app_animation", true),
-            Map.entry("pref_stacked_recents", false));
+            Map.entry("pref_stacked_recents", true));
 
     @Override
     public boolean onCreate() {

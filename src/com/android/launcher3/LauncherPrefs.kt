@@ -1,5 +1,6 @@
 /*
- * Modified by the ArkUI Project in 2026 to store the landscape app animation option.
+ * Modified by the ArkUI Project in 2026 to store the landscape app animation option
+ * and enable stacked recent apps by default.
  * Copyright (C) 2023 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -257,7 +258,7 @@ constructor(@ApplicationContext private val encryptedContext: Context) {
         @JvmField val SHOW_DRAWER_LABELS = backedUpItem("pref_drawer_show_labels", true)
         @JvmField val SLEEP_GESTURE = backedUpItem("pref_sleep_gesture", false)
         @JvmField val LANDSCAPE_APP_ANIMATION = backedUpItem("pref_landscape_app_animation", true)
-        @JvmField val STACKED_RECENTS = backedUpItem("pref_stacked_recents", false)
+        @JvmField val STACKED_RECENTS = backedUpItem("pref_stacked_recents", true)
         @JvmField
         val PROMISE_ICON_IDS = nonRestorableItem(InstallSessionHelper.PROMISE_ICON_IDS, "")
         @JvmField val WORK_EDU_STEP = backedUpItem("showed_work_profile_edu", 0)
