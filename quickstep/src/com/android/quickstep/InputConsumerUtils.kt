@@ -34,6 +34,7 @@ import com.android.quickstep.inputconsumers.DeviceLockedInputConsumer
 import com.android.quickstep.inputconsumers.LauncherInputConsumer
 import com.android.quickstep.inputconsumers.LauncherWithoutFocusInputConsumer
 import com.android.quickstep.inputconsumers.NavHandleLongPressInputConsumer
+import com.android.quickstep.inputconsumers.AssistantNavInputConsumer
 import com.android.quickstep.inputconsumers.OneHandedModeInputConsumer
 import com.android.quickstep.inputconsumers.OtherActivityInputConsumer
 import com.android.quickstep.inputconsumers.ProgressDelegateInputConsumer
@@ -276,10 +277,13 @@ object InputConsumerUtils {
             }
 
             val navHandle = tac?.navHandle ?: SystemUiProxy.INSTANCE[context]
+            val arkAiHandle = deviceState.isFullyGesturalNavMode &&
+                gestureState.displayId == android.view.Display.DEFAULT_DISPLAY &&
+                AssistantNavInputConsumer.isEnabled(context)
             if (
                 canStartSystemGesture &&
                     !previousGestureState.isRecentsAnimationRunning &&
-                    navHandle.canNavHandleBeLongPressed() &&
+                    (arkAiHandle || navHandle.canNavHandleBeLongPressed()) &&
                     !ignoreThreeFingerTrackpadForNavHandleLongPress(gestureState)
             ) {
                 reasonString.append(
@@ -293,7 +297,9 @@ object InputConsumerUtils {
                 }
                 reasonString.append("using NavHandleLongPressInputConsumer")
                 base =
-                    NavHandleLongPressInputConsumer(
+                    if (arkAiHandle) AssistantNavInputConsumer(context, base,
+                        inputMonitorCompat, navHandle, gestureState.displayId)
+                    else NavHandleLongPressInputConsumer(
                         context,
                         base,
                         inputMonitorCompat,

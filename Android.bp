@@ -590,6 +590,7 @@ android_library {
     static_libs: [
         "QuickstepResLib",
         "androidx.room_room-runtime",
+        "ArkAssistantProtocol",
     ],
     plugins: [
         "androidx.room_room-compiler-plugin",
@@ -630,6 +631,7 @@ android_library {
     // in QuickstepResLib to take precendece, so it should be the final
     // dependency. See b/208647810 for how this can go wrong.
     static_libs: [
+        "ArkAssistantProtocol",
         "SystemUI-statsd",
         "QuickstepResLib",
     ],
