@@ -1789,22 +1789,23 @@ public class Workspace<T extends View & PageIndicator> extends PagedView<T>
             mDragSourceInternal = (ShortcutAndWidgetContainer) child.getParent();
         }
 
+        boolean showItemPopup = !dragOptions.isAccessibleDrag && !mLauncher.isInState(EDIT_MODE);
         if (child instanceof BubbleTextView) {
             BubbleTextView btv = (BubbleTextView) child;
-            if (!dragOptions.isAccessibleDrag) {
+            if (showItemPopup) {
                 dragOptions.preDragCondition =
                         btv.startLongPressAction(mLauncher.getPopupControllerForAppIcons());
             }
             if (btv.isDisplaySearchResult()) {
                 dragOptions.preDragEndScale = (float) mAllAppsIconSize / btv.getIconSize();
             }
-        } else if (child instanceof FolderIcon folderIcon && !dragOptions.isAccessibleDrag) {
+        } else if (child instanceof FolderIcon folderIcon && showItemPopup) {
             Popup popup = com.android.launcher3.folder.FolderActionsPopup.show(folderIcon);
             if (popup != null) {
                 dragOptions.preDragCondition = popup.createPreDragCondition();
             }
         } else if (Flags.homeScreenEditImprovements() && child instanceof Poppable
-                && !dragOptions.isAccessibleDrag) {
+                && showItemPopup) {
             Popup popup = mLauncher.getPopupControllerForHomeScreenItems()
                     .show(child);
             if (popup != null) {

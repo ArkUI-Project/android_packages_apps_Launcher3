@@ -249,7 +249,7 @@ import com.android.launcher3.util.WallpaperThemeManager;
 import com.android.launcher3.views.FloatingIconView;
 import com.android.launcher3.views.FloatingSurfaceView;
 import com.android.launcher3.views.ListenerView;
-import com.android.launcher3.views.OptionsPopupView;
+import com.android.launcher3.views.HomeEditController;
 import com.android.launcher3.views.ScrimView;
 import com.android.launcher3.views.UpdateDeferrableView;
 import com.android.launcher3.widget.LauncherAppWidgetHostView;
@@ -376,6 +376,7 @@ public class Launcher extends StatefulActivity<LauncherState>
     private LauncherAccessibilityDelegate mAccessibilityDelegate;
 
     private PopupController<Launcher> mPopupControllerForHomeScreenItems;
+    private HomeEditController mHomeEditController;
     private PopupController<Launcher> mPopupControllerForAppIcons;
 
     private WidgetPickerDataProvider mWidgetPickerDataProvider;
@@ -1734,6 +1735,7 @@ public class Launcher extends StatefulActivity<LauncherState>
 
     @Override
     public void onDestroy() {
+        if (mHomeEditController != null) mHomeEditController.destroy();
         super.onDestroy();
         ACTIVITY_TRACKER.onContextDestroyed(this);
         mSharedPrefs.unregisterOnSharedPreferenceChangeListener(mDesktopModeListener);
@@ -2639,11 +2641,17 @@ public class Launcher extends StatefulActivity<LauncherState>
     }
 
     /**
-     * Shows the default options popup
+     * Enters workspace editing from a long press or the corresponding accessibility action.
      */
     public void showDefaultOptions(float x, float y) {
-        OptionsPopupView.show(this, getPopupTarget(x, y), OptionsPopupView.getOptions(this),
-                false);
+        getHomeEditController().enter();
+    }
+
+    public HomeEditController getHomeEditController() {
+        if (mHomeEditController == null) {
+            mHomeEditController = new HomeEditController(this);
+        }
+        return mHomeEditController;
     }
 
     @Override
@@ -2656,6 +2664,7 @@ public class Launcher extends StatefulActivity<LauncherState>
      public void collectStateHandlers(List<StateHandler<LauncherState>> out) {
         out.add(getAllAppsController());
         out.add(getWorkspace());
+        out.add(getHomeEditController());
     }
 
     public TouchController[] createTouchControllers() {

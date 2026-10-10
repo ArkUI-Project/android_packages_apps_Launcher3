@@ -97,6 +97,10 @@ public class ItemClickHandler {
 
         Launcher launcher = Launcher.getLauncher(v.getContext());
         if (!launcher.getWorkspace().isFinishedSwitchingState()) return;
+        if (launcher.isInState(com.android.launcher3.LauncherState.EDIT_MODE)) {
+            launcher.getHomeEditController().toggleSelection(v);
+            return;
+        }
 
         Object tag = v.getTag();
         if (tag instanceof WorkspaceItemInfo) {

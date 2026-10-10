@@ -51,7 +51,7 @@ import com.android.launcher3.testing.shared.TestProtocol;
 import com.android.launcher3.util.TouchUtil;
 
 /**
- * Helper class to handle touch on empty space in workspace and show options popup on long press
+ * Handles empty workspace touches and enters workspace editing on long press.
  */
 public class WorkspaceTouchListener extends GestureDetector.SimpleOnGestureListener
         implements OnTouchListener {
@@ -89,6 +89,7 @@ public class WorkspaceTouchListener extends GestureDetector.SimpleOnGestureListe
     @Override
     public boolean onTouch(View view, MotionEvent ev) {
         mGestureDetector.onTouchEvent(ev);
+        if (ev.getPointerCount() > 1) cancelLongPress();
 
         int action = ev.getActionMasked();
         if (action == ACTION_DOWN) {

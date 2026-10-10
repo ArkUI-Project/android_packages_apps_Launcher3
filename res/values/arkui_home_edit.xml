@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copyright (C) 2026 The ArkUI Project; SPDX-License-Identifier: Apache-2.0 -->
+<resources>
+    <item name="arkui_home_edit" type="id" />
+    <item name="arkui_home_edit_done" type="id" />
+    <item name="arkui_home_edit_remove" type="id" />
+    <string name="arkui_home_edit_done">Done</string>
+    <string name="arkui_home_edit_wallpaper">Wallpaper</string>
+    <string name="arkui_home_edit_effects">Wallpaper effects</string>
+    <string name="arkui_home_edit_widgets">Widgets</string>
+    <string name="arkui_home_edit_settings">Home settings</string>
+    <string name="arkui_home_edit_remove_count">Remove (%1$d)</string>
+    <string name="arkui_home_edit_select_item">Select %1$s</string>
+    <string name="arkui_home_edit_deselect_item">Deselect %1$s</string>
+    <string name="arkui_home_edit_remove_item">Remove %1$s from Home screen</string>
+</resources>

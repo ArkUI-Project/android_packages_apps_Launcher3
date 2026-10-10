@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copyright (C) 2026 The ArkUI Project; SPDX-License-Identifier: Apache-2.0 -->
+<resources>
+    <string name="arkui_home_edit_done">完成</string>
+    <string name="arkui_home_edit_wallpaper">壁纸</string>
+    <string name="arkui_home_edit_effects">壁纸效果</string>
+    <string name="arkui_home_edit_widgets">小部件</string>
+    <string name="arkui_home_edit_settings">桌面设置</string>
+    <string name="arkui_home_edit_remove_count">移除（%1$d）</string>
+    <string name="arkui_home_edit_select_item">选择%1$s</string>
+    <string name="arkui_home_edit_deselect_item">取消选择%1$s</string>
+    <string name="arkui_home_edit_remove_item">从桌面移除%1$s</string>
+</resources>

@@ -230,6 +230,17 @@ public class DragLayer extends BaseDragLayer<Launcher> implements LauncherOverla
     public boolean dispatchTouchEvent(MotionEvent ev) {
         ev.offsetLocation(getTranslationX(), 0);
         try {
+            var editor = mContainer.getHomeEditController();
+            boolean wasConsuming = editor.isConsumingPinch();
+            if (editor.onTouchEvent(ev)) {
+                if (!wasConsuming) {
+                    MotionEvent cancel = MotionEvent.obtain(ev);
+                    cancel.setAction(MotionEvent.ACTION_CANCEL);
+                    super.dispatchTouchEvent(cancel);
+                    cancel.recycle();
+                }
+                return true;
+            }
             return super.dispatchTouchEvent(ev);
         } finally {
             ev.offsetLocation(-getTranslationX(), 0);
