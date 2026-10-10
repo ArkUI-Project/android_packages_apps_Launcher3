@@ -226,6 +226,8 @@ public class LauncherSwipeHandlerV2 extends AbsSwipeUpHandler<
                                 ? IosWindowShape.amount(mSiblingAnimation.getTimelineProgress(),
                                         1f - progress, false) : 0f,
                         currentRect);
+                floatingIconView.setIconLandingProgress(mMotion.isIos
+                        ? mSiblingAnimation.getTimelineProgress() : 0f);
                 if (mLandscapeRotation != 0f) {
                     floatingIconView.setAppRotation(-mLandscapeRotation
                             * (1f - mMotion.rotationProgress(progress)),

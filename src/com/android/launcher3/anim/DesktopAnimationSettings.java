@@ -163,22 +163,8 @@ public final class DesktopAnimationSettings {
         homeSizeInterpolator = curve(prefs, "size_curve_");
         workspaceOpenInterpolator = isIos ? new PathInterpolator(.2f, 0f, .2f, 1f)
                 : interpolator;
-        workspaceHomeInterpolator = isIos ? DesktopAnimationSettings::iosWorkspaceProgress
+        workspaceHomeInterpolator = isIos ? new PathInterpolator(.2f, 0f, .2f, 1f)
                 : homeInterpolator;
-    }
-
-    private static float iosWorkspaceProgress(float time) {
-        // Let the desktop pass its resting size, rebound, then settle as the app lands.
-        // The old spring peaked before the desktop became sharp enough to see it.
-        if (time <= 0f) return 0f;
-        if (time >= 1f) return 1f;
-        if (time < .60f) return smoothStep(time / .60f) * 1.28f;
-        if (time < .82f) return 1.28f - smoothStep((time - .60f) / .22f) * .35f;
-        return .93f + smoothStep((time - .82f) / .18f) * .07f;
-    }
-
-    private static float smoothStep(float time) {
-        return time * time * (3f - 2f * time);
     }
 
     private static Interpolator curve(Map<String, ?> prefs, String prefix) {
@@ -190,7 +176,7 @@ public final class DesktopAnimationSettings {
     /** Raw timeline progress, independent of the window's eased size and handoff velocity. */
     public float blurProgress(float time, boolean opening, long duration) {
         if (isIos && !opening) {
-            // Reveal detail before the desktop rebounds, while the window still settles.
+            // Reveal detail before the returning icon lands and rebounds independently.
             float p = Utilities.boundToRange((time - blurExitStart) / .53f, 0f, 1f);
             return p * p * (3f - 2f * p);
         }

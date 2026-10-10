@@ -1,5 +1,5 @@
 /*
- * Modified by the ArkUI Project in 2026 to rotate icons with landscape app transitions.
+ * Modified by the ArkUI Project in 2026 for window deformation and icon landing rebound.
  * Copyright (C) 2019 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -121,6 +121,7 @@ public class FloatingIconView extends FrameLayout implements
     private final IosWindowShape mIosShape = new IosWindowShape();
     private final Matrix mIosDeformation = new Matrix();
     private final RectF mIosBounds = new RectF();
+    private float mIconLandingScale = 1f;
 
     public FloatingIconView(Context context) {
         this(context, null);
@@ -210,6 +211,14 @@ public class FloatingIconView extends FrameLayout implements
         mIosBounds.set(0f, 0f, bounds.width() / Math.max(.001f, getScaleX()),
                 bounds.height() / Math.max(.001f, getScaleY()));
         mIosDeformation.set(mIosShape.matrix(mIosBounds, amount));
+        invalidate();
+    }
+
+    /** One small undershoot on the window's existing return clock, ending at the handoff. */
+    public void setIconLandingProgress(float time) {
+        float progress = Utilities.boundToRange((time - .54f) / .46f, 0f, 1f);
+        float compression = (float) Math.sin(Math.PI * progress);
+        mIconLandingScale = 1f - .04f * compression * compression;
         invalidate();
     }
 
@@ -513,6 +522,8 @@ public class FloatingIconView extends FrameLayout implements
     protected void dispatchDraw(Canvas canvas) {
         int save = canvas.save();
         canvas.concat(mIosDeformation);
+        canvas.scale(mIconLandingScale, mIconLandingScale,
+                mIosBounds.centerX(), mIosBounds.centerY());
         super.dispatchDraw(canvas);
         if (mBadge != null) {
             mBadge.draw(canvas);
@@ -738,6 +749,7 @@ public class FloatingIconView extends FrameLayout implements
 
     private void recycle() {
         mIosDeformation.reset();
+        mIconLandingScale = 1f;
         setRotation(0);
         setPivotX(0);
         setPivotY(0);

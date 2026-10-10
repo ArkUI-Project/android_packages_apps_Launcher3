@@ -99,7 +99,7 @@ class ScalingWorkspaceRevealAnim(
         val previousWorkspaceAlpha = workspace.alpha
         val previousHotseatAlpha = hotseat.alpha
         // Alpha can remain at one behind an opaque app. Only an active content animation
-        // supplies a scale worth continuing; otherwise iOS must start enlarged to rebound.
+        // supplies a scale worth continuing; otherwise start from the app-opening zoom.
         val continuingScale =
             workspace.getTag(com.android.app.animation.R.id.ongoing_animation) is Animator
         // Make sure the starting state is right for the animation.

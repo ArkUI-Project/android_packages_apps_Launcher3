@@ -158,6 +158,7 @@ public class RectFSpringAnim extends ReleaseCheck {
             float halfWidth = Utilities.mapRange(width, startWidth, endWidth) / 2f;
             float halfHeight = Utilities.mapRange(boundedSize, startHeight, endHeight) / 2f;
             rect.set(x - halfWidth, y - halfHeight, x + halfWidth, y + halfHeight);
+            applyIconLandingOffset(rect, time);
             listener.onUpdate(rect, Utilities.boundToRange(size, 0f, 1f));
         });
         return tail;
@@ -176,6 +177,20 @@ public class RectFSpringAnim extends ReleaseCheck {
     public float getTimelineProgress() {
         return Utilities.boundToRange(mMotion == null ? mCurrentScaleProgress
                 : mHomeElapsed / mMotion.homeDuration, 0f, 1f);
+    }
+
+    private void applyIconLandingOffset(RectF rect, float elapsed) {
+        if (mMotion == null || !mMotion.isIos) return;
+        // Retain the arrival momentum for one small overshoot, then reach the exact icon.
+        // This is part of the window trajectory; nothing starts after the icon handoff.
+        float time = Utilities.boundToRange(
+                (elapsed / mMotion.homeDuration - .76f) / .24f, 0f, 1f);
+        float phase = time < 2f / 3f ? time * 1.5f : (1f - time) * 3f;
+        float settle = phase * phase * (3f - 2f * phase);
+        rect.offset(Math.signum(mTargetRect.centerX() - mStartRect.centerX())
+                        * mTargetRect.width() * .03f * settle,
+                Math.signum(mTargetRect.centerY() - mStartRect.centerY())
+                        * mTargetRect.height() * .045f * settle);
     }
 
     /** Only app/home callers opt in; split, PiP and taskbar springs retain their own tuning. */
@@ -532,6 +547,7 @@ public class RectFSpringAnim extends ReleaseCheck {
                             mCurrentY + currentHeight / 2);
                     break;
             }
+            applyIconLandingOffset(mCurrentRect, mHomeElapsed);
             for (OnUpdateListener onUpdateListener : mOnUpdateListeners) {
                 onUpdateListener.onUpdate(mCurrentRect, progress);
             }
