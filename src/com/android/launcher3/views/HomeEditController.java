@@ -5,24 +5,22 @@ import static com.android.launcher3.LauncherSettings.Favorites.CONTAINER_DESKTOP
 import static com.android.launcher3.LauncherState.EDIT_MODE;
 import static com.android.launcher3.LauncherState.NORMAL;
 
+import android.content.Context;
 import android.content.Intent;
+import android.content.res.ColorStateList;
 import android.graphics.Canvas;
-import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.Rect;
 import android.graphics.drawable.GradientDrawable;
-import android.graphics.drawable.RippleDrawable;
-import android.content.res.ColorStateList;
 import android.os.Bundle;
+import android.view.ContextThemeWrapper;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewTreeObserver;
 import android.widget.FrameLayout;
-import android.widget.ImageView;
 import android.widget.LinearLayout;
-import android.widget.TextView;
 
 import com.android.launcher3.AbstractFloatingView;
 import com.android.launcher3.BubbleTextView;
@@ -35,13 +33,13 @@ import com.android.launcher3.Utilities;
 import com.android.launcher3.anim.PendingAnimation;
 import com.android.launcher3.dragndrop.DragController;
 import com.android.launcher3.dragndrop.DragOptions;
-import com.android.launcher3.graphics.FrostedSurfaceDrawable;
 import com.android.launcher3.model.data.ItemInfo;
 import com.android.launcher3.model.data.LauncherAppWidgetInfo;
 import com.android.launcher3.settings.DesktopMode;
 import com.android.launcher3.states.StateAnimationConfig;
 import com.android.launcher3.statemanager.StateManager.StateHandler;
 import com.android.launcher3.util.IntSet;
+import com.google.android.material.button.MaterialButton;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -52,6 +50,7 @@ import java.util.Set;
 /** Controls the editable workspace; its transparent chrome leaves page swipes and dragging intact. */
 public final class HomeEditController implements StateHandler<LauncherState>, DragController.DragListener {
     private final Launcher mLauncher;
+    private final Context mMaterialContext;
     private final Set<Integer> mSelected = new HashSet<>();
     private final Map<View, Badge> mBadges = new HashMap<>();
     private final Set<View> mSeen = new HashSet<>();
@@ -65,6 +64,7 @@ public final class HomeEditController implements StateHandler<LauncherState>, Dr
 
     public HomeEditController(Launcher launcher) {
         mLauncher = launcher;
+        mMaterialContext = new ContextThemeWrapper(launcher, R.style.ArkuiHomeEditTheme);
         launcher.getDragController().addDragListener(this);
     }
 
@@ -275,21 +275,19 @@ public final class HomeEditController implements StateHandler<LauncherState>, Dr
         return background;
     }
 
-    private TextView button(int label, int color) {
-        TextView view = new TextView(mLauncher);
+    private int color(int resource) { return mMaterialContext.getColor(resource); }
+
+    private MaterialButton button(int label, int styleAttr) {
+        MaterialButton view = new MaterialButton(mMaterialContext, null, styleAttr);
         view.setText(label);
-        view.setTextColor(Color.WHITE);
-        view.setTextSize(16);
         view.setGravity(Gravity.CENTER);
-        view.setPadding(dp(24), 0, dp(24), 0);
-        view.setBackground(new RippleDrawable(ColorStateList.valueOf(0x40ffffff), rounded(color, 28), null));
-        view.setMinHeight(dp(48));
         return view;
     }
 
     private final class EditChrome extends FrameLayout implements Insettable {
-        final TextView done;
-        final TextView remove;
+        final MaterialButton done;
+        final MaterialButton remove;
+        final LinearLayout toolbar;
         final LinearLayout actions;
 
         EditChrome() {
@@ -297,12 +295,13 @@ public final class HomeEditController implements StateHandler<LauncherState>, Dr
             setId(R.id.arkui_home_edit);
             setClipChildren(false);
             setAccessibilityPaneTitle(mLauncher.getString(R.string.edit_home_screen));
-            done = button(R.string.arkui_home_edit_done, 0xff3478f6);
-            done.setId(R.id.arkui_home_edit_done);
-            done.setOnClickListener(v -> mLauncher.getStateManager().goToState(NORMAL));
-            addView(done, new FrameLayout.LayoutParams(-2, dp(48), Gravity.TOP | Gravity.END));
-            remove = button(R.string.remove_drop_target_label, 0xffbc353b);
+            toolbar = new LinearLayout(mMaterialContext);
+            toolbar.setGravity(Gravity.CENTER_VERTICAL | Gravity.END);
+            addView(toolbar, new FrameLayout.LayoutParams(-1, -2, Gravity.TOP));
+            remove = button(R.string.remove_drop_target_label, R.attr.arkuiHomeEditButtonStyle);
             remove.setId(R.id.arkui_home_edit_remove);
+            remove.setBackgroundTintList(ColorStateList.valueOf(color(R.color.materialColorErrorContainer)));
+            remove.setTextColor(color(R.color.materialColorOnErrorContainer));
             remove.setOnClickListener(v -> {
                 ArrayList<View> sources = new ArrayList<>();
                 for (var entry : mBadges.entrySet()) {
@@ -310,56 +309,45 @@ public final class HomeEditController implements StateHandler<LauncherState>, Dr
                 }
                 removeItems(sources);
             });
-            addView(remove, new FrameLayout.LayoutParams(-2, dp(48), Gravity.TOP | Gravity.START));
-            actions = new LinearLayout(mLauncher);
+            toolbar.addView(remove, new LinearLayout.LayoutParams(-2, -2));
+            View spacer = new View(mMaterialContext);
+            toolbar.addView(spacer, new LinearLayout.LayoutParams(0, 0, 1));
+            done = button(R.string.arkui_home_edit_done, R.attr.arkuiHomeEditButtonStyle);
+            done.setId(R.id.arkui_home_edit_done);
+            done.setOnClickListener(v -> mLauncher.getStateManager().goToState(NORMAL));
+            LinearLayout.LayoutParams doneParams = new LinearLayout.LayoutParams(-2, -2);
+            doneParams.setMarginStart(dp(8));
+            toolbar.addView(done, doneParams);
+            actions = new LinearLayout(mMaterialContext);
             actions.setGravity(Gravity.CENTER);
+            actions.setPadding(dp(12), dp(12), dp(12), dp(12));
+            actions.setBackground(rounded(color(R.color.materialColorSurfaceContainerLow), 32));
             int[] labels = {R.string.arkui_home_edit_wallpaper, R.string.arkui_home_edit_effects,
                     R.string.arkui_home_edit_widgets, R.string.arkui_home_edit_settings};
             int[] icons = {R.drawable.arkui_ic_edit_wallpaper, R.drawable.arkui_ic_edit_effects,
                     R.drawable.ic_widget, R.drawable.ic_setting};
             for (int i = 0; i < labels.length; i++) {
                 final int action = i;
-                LinearLayout column = new LinearLayout(mLauncher);
-                column.setOrientation(LinearLayout.VERTICAL);
-                column.setGravity(Gravity.CENTER);
-                column.setPadding(0, dp(8), 0, dp(8));
-                column.setContentDescription(mLauncher.getString(labels[i]));
-                column.setOnClickListener(v -> runAction(v, action));
-                if (i == 2) column.setEnabled(Utilities.isWorkspaceEditAllowed(mLauncher));
-                ImageView icon = new ImageView(mLauncher);
-                icon.setImageResource(icons[i]);
-                icon.setImageTintList(ColorStateList.valueOf(Color.WHITE));
-                icon.setPadding(dp(18), dp(18), dp(18), dp(18));
-                FrostedSurfaceDrawable glass = new FrostedSurfaceDrawable(icon, 0xff484d60, dp(32));
-                glass.setStroke(dp(1), 0x40ffffff);
-                icon.setBackground(glass);
-                icon.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-                column.addView(icon, new LinearLayout.LayoutParams(dp(64), dp(64)));
-                TextView label = new TextView(mLauncher);
-                label.setText(labels[i]);
-                label.setTextColor(Color.WHITE);
-                label.setTextSize(13);
-                label.setGravity(Gravity.CENTER);
-                label.setShadowLayer(dp(3), 0, dp(1), 0xb0000000);
-                label.setPadding(0, dp(12), 0, 0);
-                label.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-                column.addView(label, new LinearLayout.LayoutParams(-1, -2));
-                actions.addView(column, new LinearLayout.LayoutParams(0, -2, 1));
+                MaterialButton actionButton = button(labels[i], R.attr.arkuiHomeEditActionStyle);
+                actionButton.setIconResource(icons[i]);
+                actionButton.setIconGravity(MaterialButton.ICON_GRAVITY_TEXT_TOP);
+                actionButton.setOnClickListener(v -> runAction(v, action));
+                if (i == 2) actionButton.setEnabled(Utilities.isWorkspaceEditAllowed(mLauncher));
+                LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, -1, 1);
+                if (i > 0) params.setMarginStart(dp(6));
+                actions.addView(actionButton, params);
             }
             addView(actions, new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL));
         }
 
         @Override public void setInsets(Rect insets) {
-            FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) done.getLayoutParams();
+            FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) toolbar.getLayoutParams();
             params.topMargin = insets.top + dp(16);
-            params.setMarginEnd(insets.right + dp(24));
-            done.setLayoutParams(params);
-            params = (FrameLayout.LayoutParams) remove.getLayoutParams();
-            params.topMargin = insets.top + dp(16);
-            params.setMarginStart(insets.left + dp(24));
-            remove.setLayoutParams(params);
+            params.leftMargin = insets.left + dp(24);
+            params.rightMargin = insets.right + dp(24);
+            toolbar.setLayoutParams(params);
             params = (FrameLayout.LayoutParams) actions.getLayoutParams();
-            params.bottomMargin = insets.bottom + dp(20);
+            params.bottomMargin = insets.bottom + dp(16);
             params.leftMargin = insets.left + dp(16);
             params.rightMargin = insets.right + dp(16);
             actions.setLayoutParams(params);
@@ -406,12 +394,18 @@ public final class HomeEditController implements StateHandler<LauncherState>, Dr
         @Override protected void onDraw(Canvas canvas) {
             float x = getWidth() / 2f, y = getHeight() / 2f, radius = dp(11);
             paint.setStyle(Paint.Style.FILL);
-            paint.setColor(widget ? 0xffef5148 : selected ? 0xff3478f6 : 0x40666a78);
-            canvas.drawCircle(x, y, radius, paint);
+            paint.setColor(color(widget ? R.color.materialColorErrorContainer
+                    : selected ? R.color.materialColorPrimary : R.color.materialColorSurfaceContainerHighest));
+            canvas.drawRoundRect(x - radius, y - radius, x + radius, y + radius,
+                    dp(widget ? 11 : 7), dp(widget ? 11 : 7), paint);
             paint.setStyle(Paint.Style.STROKE);
             paint.setStrokeWidth(dp(1.5f));
-            paint.setColor(Color.WHITE);
-            canvas.drawCircle(x, y, radius, paint);
+            paint.setColor(color(widget ? R.color.materialColorOnErrorContainer
+                    : selected ? R.color.materialColorOnPrimary : R.color.materialColorOutline));
+            if (!widget && !selected) {
+                canvas.drawRoundRect(x - radius, y - radius, x + radius, y + radius,
+                        dp(7), dp(7), paint);
+            }
             if (widget) {
                 paint.setStrokeWidth(dp(2));
                 canvas.drawLine(x - dp(5), y, x + dp(5), y, paint);
