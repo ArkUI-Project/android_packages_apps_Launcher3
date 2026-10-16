@@ -279,15 +279,22 @@ public class QuickstepTransitionManager implements OnDeviceProfileChangeListener
     private final LatencyTracker mLatencyTracker;
 
     private LauncherBackAnimationController mBackAnimationController;
+    private final ArrayList<Animator> mRunningAppTransitions = new ArrayList<>();
     private final AnimatorListenerAdapter mForceInvisibleListener = new AnimatorListenerAdapter() {
         @Override
         public void onAnimationStart(Animator animation) {
+            if (!mRunningAppTransitions.contains(animation)) {
+                mRunningAppTransitions.add(animation);
+            }
             mLauncher.addForceInvisibleFlag(INVISIBLE_BY_APP_TRANSITIONS);
         }
 
         @Override
         public void onAnimationEnd(Animator animation) {
-            mLauncher.clearForceInvisibleFlag(INVISIBLE_BY_APP_TRANSITIONS);
+            mRunningAppTransitions.remove(animation);
+            if (mRunningAppTransitions.isEmpty()) {
+                mLauncher.clearForceInvisibleFlag(INVISIBLE_BY_APP_TRANSITIONS);
+            }
         }
     };
 
@@ -535,12 +542,33 @@ public class QuickstepTransitionManager implements OnDeviceProfileChangeListener
             @NonNull RemoteAnimationTarget[] wallpaperTargets,
             @NonNull RemoteAnimationTarget[] nonAppTargets,
             boolean launcherClosing, LauncherAnimationRunner.AnimationResult result) {
+        Workspace<?> workspace = mLauncher.getWorkspace();
+        Hotseat hotseat = mLauncher.getHotseat();
+        boolean continueHomeReveal = launcherClosing && mLauncher.isInState(NORMAL)
+                && (workspace.getTag(com.android.app.animation.R.id.ongoing_animation)
+                        instanceof Animator
+                    || hotseat.getTag(com.android.app.animation.R.id.ongoing_animation)
+                        instanceof Animator);
+        float workspaceScale = workspace.getScaleX();
+        float hotseatScale = hotseat.getScaleX();
+        float workspaceAlpha = workspace.getAlpha();
+        float hotseatAlpha = hotseat.getAlpha();
         // Set the state animation first so that any state listeners are called
         // before our internal listeners.
         mLauncher.getStateManager().setCurrentAnimation(anim);
 
+        if (continueHomeReveal) {
+            // Cancelling the return animation reapplies NORMAL and resets these values.
+            // Restore the displayed frame before measuring the launch icon or creating
+            // the next content animator, so a quick app switch never flashes that reset.
+            SCALE_PROPERTY.setValue(workspace, workspaceScale);
+            SCALE_PROPERTY.setValue(hotseat, hotseatScale);
+            workspace.setAlpha(workspaceAlpha);
+            hotseat.setAlpha(hotseatAlpha);
+        }
+
         // Note: the targetBounds are relative to the launcher
-        int startDelay = getSingleFrameMs(mLauncher);
+        int startDelay = continueHomeReveal ? 0 : getSingleFrameMs(mLauncher);
         Animator windowAnimator = getOpeningWindowAnimators(
                 v, appTargets, wallpaperTargets, nonAppTargets, launcherClosing, anim::cancel,
                 result);
@@ -737,6 +765,15 @@ public class QuickstepTransitionManager implements OnDeviceProfileChangeListener
                 scaleAnim.setInterpolator(isAppOpening ? motion.workspaceOpenInterpolator
                         : motion.workspaceHomeInterpolator);
                 launcherAnimator.play(scaleAnim);
+                if (isAppOpening && view.getAlpha() < 1f) {
+                    // Finish a partially revealed desktop gradually behind the opening app.
+                    // Its previous return animation has already relinquished ownership.
+                    ObjectAnimator alpha = ObjectAnimator.ofFloat(view, View.ALPHA,
+                            view.getAlpha(), 1f);
+                    alpha.setDuration(motion.openDuration);
+                    alpha.setInterpolator(motion.workspaceOpenInterpolator);
+                    launcherAnimator.play(alpha);
+                }
             });
 
             endListener = () -> {
@@ -745,6 +782,7 @@ public class QuickstepTransitionManager implements OnDeviceProfileChangeListener
                             != launcherAnimator) return;
                     if (!cancelled[0]) {
                         SCALE_PROPERTY.set(view, 1f);
+                        view.setAlpha(1f);
                     }
                     view.setLayerType(View.LAYER_TYPE_NONE, null);
 

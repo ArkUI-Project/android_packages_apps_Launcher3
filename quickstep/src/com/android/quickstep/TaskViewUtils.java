@@ -215,6 +215,7 @@ public final class TaskViewUtils {
         final DesktopAnimationSettings motion = DesktopAnimationSettings.read(context);
         final boolean singleAppLaunch = !taskView.containsMultipleTasks()
                 && !(taskView instanceof DesktopTaskView);
+        final boolean stackedLaunch = recentsView.isStackedTaskLaunch(taskView);
         final Interpolator launchInterpolator = singleAppLaunch
                 ? motion.interpolator : TOUCH_RESPONSE;
         final AnimatedFloat blurProgress = new AnimatedFloat();
@@ -319,10 +320,13 @@ public final class TaskViewUtils {
                     && LandscapeAppAnimation.getOpeningRotation(context, dp, openingTarget,
                             openingTarget.rotationChange) != 0f;
             if (singleAppLaunch && openingTarget != null) {
-                tvsLocal.prepareLandscapeLaunch(openingTarget, motion);
+                tvsLocal.prepareOverviewLaunch(openingTarget, motion, stackedLaunch);
                 out.addFloat(tvsLocal.landscapeLaunchProgress, AnimatedFloat.VALUE,
                         0f, 1f, launchInterpolator);
                 out.addEndListener(tvsLocal::finishLandscapeLaunch);
+                if (stackedLaunch) {
+                    out.addEndListener(success -> tvsLocal.setDrawsAboveOtherApps(false));
+                }
             }
             final float stackScale = taskView.getStackScale();
             final float stackTranslation = taskView.getStackTranslationX();
@@ -336,7 +340,9 @@ public final class TaskViewUtils {
                             stackTranslation * (1f - progress),
                             Utilities.mapRange(progress, stackAlpha, 1f));
                 });
-                out.addEndListener(success -> recentsView.updateCurveProperties());
+                out.addEndListener(success -> {
+                    if (!success || !stackedLaunch) recentsView.updateCurveProperties();
+                });
             }
             out.setFloat(tvsLocal.fullScreenProgress,
                     AnimatedFloat.VALUE, 1, launchInterpolator);
@@ -352,7 +358,16 @@ public final class TaskViewUtils {
                 @Override
                 public void onAnimationStart(Animator animation) {
                     super.onAnimationStart(animation);
-                    if (landscapeLaunch) tvsLocal.apply(targetHandle.getTransformParams());
+                    if (stackedLaunch) {
+                        // A formerly covered card must launch above the old live task as well
+                        // as above Launcher. Otherwise that task can cover the expanding app.
+                        tvsLocal.setDrawsAboveOtherApps(true);
+                    }
+                    if (landscapeLaunch || stackedLaunch) {
+                        // Capture at progress zero, before the first animated frame changes
+                        // scroll and scale, so the surface starts exactly at the card's pose.
+                        tvsLocal.apply(targetHandle.getTransformParams());
+                    }
                     final SurfaceTransaction showTransaction = new SurfaceTransaction();
                     for (int i = targets.apps.length - 1; i >= 0; --i) {
                         showTransaction.getTransaction().show(targets.apps[i].leash);
@@ -418,7 +433,8 @@ public final class TaskViewUtils {
 
         int taskIndex = recentsView.indexOfChild(taskView);
         boolean parallaxCenterAndAdjacentTask =
-                !dp.getDeviceProperties().isTablet() && taskIndex != recentsView.getCurrentPage();
+                !stackedLaunch && !dp.getDeviceProperties().isTablet()
+                        && taskIndex != recentsView.getCurrentPage();
         if (!skipViewChanges && parallaxCenterAndAdjacentTask && topMostSimulators != null
                 && topMostSimulators.length > 0) {
             out.addFloat(taskView, VIEW_ALPHA, 1, 0, clampToProgress(LINEAR, 0.2f, 0.4f));

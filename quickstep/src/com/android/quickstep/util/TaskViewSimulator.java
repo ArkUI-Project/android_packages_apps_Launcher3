@@ -146,6 +146,12 @@ public class TaskViewSimulator implements TransformParams.BuilderProxy {
     /** Unfold the actual thumbnail transform into the app buffer's final coordinate space. */
     public void prepareLandscapeLaunch(RemoteAnimationTarget target,
             DesktopAnimationSettings motion) {
+        prepareOverviewLaunch(target, motion, false);
+    }
+
+    /** Capture a stacked card's complete pose before animating its window to fullscreen. */
+    public void prepareOverviewLaunch(RemoteAnimationTarget target,
+            DesktopAnimationSettings motion, boolean captureStackedPose) {
         LandscapeLaunch previous = mLandscapeLaunch != null ? mLandscapeLaunch : mInterruptedLaunch;
         float previousRadius = getCurrentCornerRadius();
         mGestureSeed = null;
@@ -155,8 +161,9 @@ public class TaskViewSimulator implements TransformParams.BuilderProxy {
         mInterruptedLaunch = null;
         mLandscapeLaunch = null;
         if (mDp == null || mSplitBounds != null || mIsDesktopTask
-                || LandscapeAppAnimation.getOpeningRotation(mContext, mDp, target,
-                        target.rotationChange) == 0f) return;
+                || (!captureStackedPose
+                        && LandscapeAppAnimation.getOpeningRotation(mContext, mDp, target,
+                                target.rotationChange) == 0f)) return;
         mLandscapeLaunch = new LandscapeLaunch(target, motion);
         landscapeLaunchProgress.updateValue(0f);
         if (previous != null && previous.initialized) {
@@ -171,6 +178,11 @@ public class TaskViewSimulator implements TransformParams.BuilderProxy {
     }
 
     public void finishLandscapeLaunch(boolean success) {
+        if (success && mLandscapeLaunch != null) {
+            // The captured transform has reached fullscreen. Do not reapply the source
+            // card's stack offset if a final draw runs before the remote targets release.
+            setStackTransform(1f, 0f, 1f);
+        }
         if (!success && mLandscapeLaunch != null && mLandscapeLaunch.initialized) {
             mInterruptedLaunch = mLandscapeLaunch;
             mInterruptedMatrix.set(mMatrix);
@@ -711,8 +723,11 @@ public class TaskViewSimulator implements TransformParams.BuilderProxy {
 
         // TaskView scales its contents before applying dismissal/neighbor translations. Keep
         // the live surface in the same space so reflow is not scaled a second time.
+        // The legacy carousel does not populate mCarouselTaskSize. Its cards still scale
+        // around their centers, rather than the origin of the display.
+        Rect stackBounds = mCarouselTaskSize.isEmpty() ? mFullTaskSize : mCarouselTaskSize;
         mMatrix.postScale(mStackScale, mStackScale,
-                mCarouselTaskSize.centerX(), mCarouselTaskSize.centerY());
+                stackBounds.exactCenterX(), stackBounds.exactCenterY());
         mOrientationState.getOrientationHandler().setPrimary(mMatrix, MATRIX_POST_TRANSLATE,
                 taskPrimaryTranslation.value);
         mOrientationState.getOrientationHandler().setSecondary(mMatrix, MATRIX_POST_TRANSLATE,

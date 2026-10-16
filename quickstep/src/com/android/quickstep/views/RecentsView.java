@@ -782,6 +782,8 @@ public abstract class RecentsView<
 
     @ViewDebug.ExportedProperty(category = "launcher")
     protected float mContentAlpha = 1;
+    private float mStackedTaskLaunchAlpha = 1f;
+    @Nullable private Animator mStackedTaskLaunchAnimator;
     private float mSmallWindowPreviewAlpha = 1f;
     private boolean mSmallWindowPreviewActive;
     private final RectF mSmallWindowPreviewSource = new RectF();
@@ -2718,6 +2720,12 @@ public abstract class RecentsView<
         return mStackedRecentsActive
                 ? (1f - Utilities.boundToRange(mFullscreenProgress, 0f, 1f))
                         * (1f - mGridProgress) * (1f - mTaskModalness) : 0f;
+    }
+
+    /** Whether a single task is launching from the overlapping phone layout. */
+    public boolean isStackedTaskLaunch(TaskView taskView) {
+        return getStackedTaskTransformAmount() > 0f
+                && !taskView.containsMultipleTasks() && !(taskView instanceof DesktopTaskView);
     }
 
     private void updateStackedTaskTransform(TaskView task, int index, int scroll, float amount) {
@@ -4941,7 +4949,7 @@ public abstract class RecentsView<
     }
 
     private float getVisibleContentAlpha() {
-        return mContentAlpha * mSmallWindowPreviewAlpha;
+        return mContentAlpha * mSmallWindowPreviewAlpha * mStackedTaskLaunchAlpha;
     }
 
     /** Keep adjacent cards attached to the dragged app, then let them recede on selection. */
@@ -5053,7 +5061,7 @@ public abstract class RecentsView<
 
         // Keep the surface applier attached while the preview owns the live app. Individual
         // task cards can be fully invisible without disabling its render callback.
-        if (alpha > 0 || mSmallWindowPreviewActive) {
+        if (alpha > 0 || mSmallWindowPreviewActive || mStackedTaskLaunchAnimator != null) {
             setVisibility(VISIBLE);
         } else if (!mFreezeViewVisibility) {
             setVisibility(INVISIBLE);
@@ -5070,6 +5078,7 @@ public abstract class RecentsView<
             mFreezeViewVisibility = freezeViewVisibility;
             if (!mFreezeViewVisibility) {
                 setVisibility(getVisibleContentAlpha() > 0 || mSmallWindowPreviewActive
+                        || mStackedTaskLaunchAnimator != null
                         ? VISIBLE : INVISIBLE);
             }
         }
@@ -6086,6 +6095,14 @@ public abstract class RecentsView<
      */
     @SuppressLint("Recycle")
     public AnimatorSet createAdjacentPageAnimForTaskLaunch(TaskView taskView) {
+        return createAdjacentPageAnimForTaskLaunch(taskView, true);
+    }
+
+    private AnimatorSet createAdjacentPageAnimForTaskLaunch(
+            TaskView taskView, boolean hasWindowAnimation) {
+        if (hasWindowAnimation && isStackedTaskLaunch(taskView)) {
+            return createStackedTaskLaunchAnimation(taskView);
+        }
         AnimatorSet anim = new AnimatorSet();
 
         int taskIndex = indexOfChild(taskView);
@@ -6179,6 +6196,50 @@ public abstract class RecentsView<
         return anim;
     }
 
+    private AnimatorSet createStackedTaskLaunchAnimation(TaskView taskView) {
+        AnimatorSet anim = new AnimatorSet();
+        ValueAnimator fade = ValueAnimator.ofFloat(0f, 1f);
+        fade.addUpdateListener(animation -> {
+            if (mStackedTaskLaunchAnimator != anim) return;
+            float progress = (float) animation.getAnimatedValue();
+            // The window owns the captured card pose. Do not unstack or parallax the
+            // snapshots underneath it: that would move the source a second time.
+            mStackedTaskLaunchAlpha = 1f - Utilities.boundToRange(progress / .2f, 0f, 1f);
+            applyContentAlpha();
+        });
+        anim.play(fade);
+        anim.addListener(new AnimatorListenerAdapter() {
+            @Override
+            public void onAnimationStart(Animator animation) {
+                mStackedTaskLaunchAnimator = anim;
+                mStackedTaskLaunchAlpha = 1f;
+                applyContentAlpha();
+                if (!taskView.isRunningTask()) {
+                    mBlurUtils.setDrawLiveTileBelowRecents(true);
+                }
+            }
+
+            @Override
+            public void onAnimationCancel(Animator animation) {
+                finishStackedTaskLaunchAnimation(anim);
+                updateCurveProperties();
+            }
+
+            @Override
+            public void onAnimationEnd(Animator animation) {
+                finishStackedTaskLaunchAnimation(anim);
+            }
+        });
+        return anim;
+    }
+
+    private void finishStackedTaskLaunchAnimation(Animator animation) {
+        if (mStackedTaskLaunchAnimator != animation) return;
+        mStackedTaskLaunchAnimator = null;
+        mStackedTaskLaunchAlpha = 1f;
+        applyContentAlpha();
+    }
+
     /**
      * Returns the scale up required on the view, so that it coves the screen completely
      */
@@ -6224,7 +6285,11 @@ public abstract class RecentsView<
 
         int targetSysUiFlags = taskView.getSysUiStatusNavFlags();
         final boolean[] passedOverviewThreshold = new boolean[]{false};
-        AnimatorSet anim = createAdjacentPageAnimForTaskLaunch(taskView);
+        final boolean stackedWindowLaunch = taskView.isRunningTask()
+                && isStackedTaskLaunch(taskView);
+        // A non-running swipe-down task has no window animator until the gesture finishes;
+        // keep animating its snapshot rather than fading it away.
+        AnimatorSet anim = createAdjacentPageAnimForTaskLaunch(taskView, taskView.isRunningTask());
         anim.play(new AnimatedFloat(v -> {
             // Once we pass a certain threshold, update the sysui flags to match the target
             // tasks' flags
@@ -6258,7 +6323,8 @@ public abstract class RecentsView<
                 RemoteAnimationTargets targets = handle.getTransformParams().getTargetSet();
                 if (!taskView.containsMultipleTasks() && !(taskView instanceof DesktopTaskView)
                         && targets != null && targets.getFirstAppTarget() != null) {
-                    simulator.prepareLandscapeLaunch(targets.getFirstAppTarget(), motion);
+                    simulator.prepareOverviewLaunch(targets.getFirstAppTarget(), motion,
+                            stackedWindowLaunch);
                     simulator.setStackTransform(taskView.getStackScale(),
                             taskView.getStackTranslationX(), taskView.getStackAlpha());
                     simulator.apply(handle.getTransformParams());
@@ -6298,6 +6364,7 @@ public abstract class RecentsView<
                 mContainer.getStatsLogManager().logger().withItemInfo(taskView.getItemInfo())
                         .log(LAUNCHER_TASK_LAUNCH_SWIPE_DOWN);
             } else {
+                if (stackedWindowLaunch) finishStackedTaskLaunchAnimation(anim);
                 onTaskLaunchAnimationEnd(false);
             }
             mPendingAnimation = null;
