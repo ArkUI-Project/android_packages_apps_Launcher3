@@ -33,6 +33,7 @@ import com.android.launcher3.DeviceProfile
 import com.android.launcher3.InsettableFrameLayout
 import com.android.launcher3.R
 import com.android.launcher3.popup.ArrowPopup
+import com.android.launcher3.popup.GroupedMenuStyle
 import com.android.launcher3.popup.RoundedArrowDrawable
 import com.android.launcher3.popup.SystemShortcut
 import com.android.launcher3.util.Themes
@@ -75,7 +76,7 @@ class TaskMenuViewWithArrow<T> : ArrowPopup<T> where T : RecentsViewContainer, T
     ) : super(context, attrs, defStyleAttr)
 
     init {
-        clipToOutline = true
+        clipToOutline = false
 
         shouldScaleArrow = true
         mIsArrowRotated = true
@@ -88,7 +89,8 @@ class TaskMenuViewWithArrow<T> : ArrowPopup<T> where T : RecentsViewContainer, T
 
     private var alignedOptionIndex: Int = 0
     private val extraSpaceForRowAlignment: Int
-        get() = optionMeasuredHeight * alignedOptionIndex
+        get() = (optionMeasuredHeight + resources.getDimensionPixelSize(R.dimen.task_menu_spacing)) *
+            alignedOptionIndex
 
     private val menuPaddingEnd = context.resources.getDimensionPixelSize(R.dimen.task_card_margin)
 
@@ -195,6 +197,7 @@ class TaskMenuViewWithArrow<T> : ArrowPopup<T> where T : RecentsViewContainer, T
         TaskOverlayFactory.getEnabledShortcuts(taskView, taskContainer).forEach {
             this.addMenuOption(it)
         }
+        GroupedMenuStyle.applyToGroup(optionLayout)
 
         // Add the spaces between items
         val divider = ShapeDrawable(RectShape())
@@ -222,6 +225,7 @@ class TaskMenuViewWithArrow<T> : ArrowPopup<T> where T : RecentsViewContainer, T
             menuOptionView.requireViewById(R.id.icon),
             menuOptionView.requireViewById(R.id.text),
         )
+        GroupedMenuStyle.styleSystemIcon(menuOptionView.requireViewById(R.id.icon))
         val lp = menuOptionView.layoutParams as LayoutParams
         lp.width = LayoutParams.MATCH_PARENT
         menuOptionView.setPaddingRelative(
@@ -235,11 +239,12 @@ class TaskMenuViewWithArrow<T> : ArrowPopup<T> where T : RecentsViewContainer, T
     }
 
     override fun assignMarginsAndBackgrounds(viewGroup: ViewGroup) {
-        assignMarginsAndBackgrounds(
-            this,
-            Themes.getAttrColor(context, com.android.internal.R.attr.colorSurface),
-        )
+        // Keep the group backing transparent while the rows form one connected shape.
+        background = null
+        GroupedMenuStyle.applyToGroup(optionLayout)
     }
+
+    override fun shouldAddArrow(): Boolean = false
 
     override fun onCreateOpenAnimation(anim: AnimatorSet) {
         scrim?.let {

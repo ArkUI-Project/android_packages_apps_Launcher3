@@ -2,11 +2,9 @@
 <!-- Copyright (C) 2026 The ArkUI Project; SPDX-License-Identifier: Apache-2.0 -->
 <resources>
     <attr name="arkuiHomeEditButtonStyle" format="reference" />
-    <attr name="arkuiHomeEditActionStyle" format="reference" />
     <style name="ArkuiHomeEditTheme" parent="Theme.Material3Expressive.DayNight.NoActionBar">
         <item name="android:fontFamily">sans-serif</item>
         <item name="arkuiHomeEditButtonStyle">@style/Widget.Arkui.HomeEdit.Button</item>
-        <item name="arkuiHomeEditActionStyle">@style/Widget.Arkui.HomeEdit.Action</item>
         <item name="colorPrimary">@color/materialColorPrimary</item>
         <item name="colorOnPrimary">@color/materialColorOnPrimary</item>
         <item name="colorPrimaryContainer">@color/materialColorPrimaryContainer</item>
@@ -34,20 +32,5 @@
         <item name="android:textAllCaps">false</item>
         <item name="android:maxLines">1</item>
         <item name="android:ellipsize">end</item>
-    </style>
-    <style name="Widget.Arkui.HomeEdit.Action" parent="Widget.Material3Expressive.Button.TonalButton">
-        <item name="android:minWidth">0dp</item>
-        <item name="android:minHeight">104dp</item>
-        <item name="android:insetTop">0dp</item>
-        <item name="android:insetBottom">0dp</item>
-        <item name="android:paddingStart">4dp</item>
-        <item name="android:paddingEnd">4dp</item>
-        <item name="android:paddingTop">16dp</item>
-        <item name="android:paddingBottom">16dp</item>
-        <item name="android:textAppearance">@style/TextAppearance.Material3.LabelLarge</item>
-        <item name="android:textAllCaps">false</item>
-        <item name="android:maxLines">2</item>
-        <item name="iconSize">28dp</item>
-        <item name="iconPadding">8dp</item>
     </style>
 </resources>

@@ -20,7 +20,8 @@
     android:layout_height="wrap_content"
     android:minWidth="@dimen/task_menu_width_grid"
     android:animateLayoutChanges="true"
-    android:background="@drawable/task_menu_bg"
+    android:clipChildren="false"
+    android:clipToPadding="false"
     android:orientation="vertical"
     android:visibility="invisible">
 

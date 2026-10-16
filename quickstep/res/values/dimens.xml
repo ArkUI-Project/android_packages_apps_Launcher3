@@ -23,7 +23,7 @@
     <!--  Task Menu View  -->
     <dimen name="task_menu_corner_radius">26dp</dimen>
     <dimen name="task_menu_item_corner_radius">4dp</dimen>
-    <dimen name="task_menu_spacing">2dp</dimen>
+    <dimen name="task_menu_spacing">@dimen/arkui_menu_item_spacing</dimen>
     <dimen name="task_menu_width_grid">216dp</dimen>
     <dimen name="task_menu_horizontal_padding">8dp</dimen>
     <dimen name="overview_proactive_row_height">48dp</dimen>

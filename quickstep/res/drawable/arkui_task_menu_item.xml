@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copyright (C) 2026 The ArkUI Project; SPDX-License-Identifier: Apache-2.0 -->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android"
+    android:color="@color/arkui_app_icon_menu_ripple">
+    <item>
+        <shape>
+            <solid android:color="@color/materialColorSurfaceBright" />
+            <corners android:radius="@dimen/arkui_menu_outer_radius" />
+        </shape>
+    </item>
+</ripple>

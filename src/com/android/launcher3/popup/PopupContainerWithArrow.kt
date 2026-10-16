@@ -18,11 +18,16 @@ package com.android.launcher3.popup
 import android.animation.AnimatorSet
 import android.animation.LayoutTransition
 import android.content.Context
+import android.content.res.ColorStateList
+import android.graphics.Color
 import android.graphics.PointF
 import android.graphics.Rect
 import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.RippleDrawable
 import android.os.Handler
 import android.os.Looper
+import android.view.ContextThemeWrapper
 import android.view.MotionEvent
 import android.view.View
 import android.view.View.OnClickListener
@@ -56,7 +61,7 @@ import kotlin.math.max
  */
 class PopupContainerWithArrow<T>
 private constructor(
-    context: Context?,
+    context: Context,
     originalView: View,
     itemInfo: ItemInfo,
     private val updateIconUi: Boolean,
@@ -69,14 +74,14 @@ private constructor(
     private val deepShortcuts: MutableList<DeepShortcutView> = ArrayList()
     private val interceptTouchDown = PointF()
     private val shortcutHeight: Float =
-        resources.getDimension(R.dimen.system_shortcut_header_height)
+        resources.getDimension(R.dimen.arkui_app_icon_menu_row_height)
 
     val itemClickListener: OnClickListener
         get() = OnClickListener { view: View? ->
             mActivityContext?.itemOnClickListener?.onClick(view)
         }
 
-    private var containerWidth: Int = resources.getDimensionPixelSize(R.dimen.bg_popup_item_width)
+    private var containerWidth: Int = resources.getDimensionPixelSize(R.dimen.arkui_app_icon_menu_width)
     private var deepShortcutContainer: ViewGroup? = null
     private var currentHeight = 0f
 
@@ -86,6 +91,94 @@ private constructor(
         private set
 
     var widgetContainer: ViewGroup? = null
+
+    override fun show() {
+        // Size the connected groups before ArrowPopup chooses a position around the icon.
+        styleMenuGroup(this, beforeDisplay = true)
+        super.show()
+    }
+
+    override fun shouldAddArrow(): Boolean = false
+
+    override fun getChildContainerMargin(): Int =
+        resources.getDimensionPixelSize(R.dimen.arkui_menu_group_spacing)
+
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density + .5f).toInt()
+
+    private fun menuShape(color: Int, radius: Float): GradientDrawable =
+        GradientDrawable().apply {
+            setColor(color)
+            cornerRadius = radius * resources.displayMetrics.density
+        }
+
+    /** Keep the expressive styling local to app menus, including asynchronously added rows. */
+    override fun assignMarginsAndBackgrounds(viewGroup: ViewGroup) {
+        styleMenuGroup(viewGroup)
+        requestLayout()
+        measure(MeasureSpec.UNSPECIFIED, MeasureSpec.UNSPECIFIED)
+    }
+
+    private fun styleMenuGroup(group: ViewGroup, beforeDisplay: Boolean = false) {
+        group.background = null
+        val children = (0 until group.childCount).map(group::getChildAt)
+            .filter { it.visibility == VISIBLE }
+        val rows = children.filterIsInstance<DeepShortcutView>()
+        children.forEach { child ->
+            child.elevation = 0f
+            when (child) {
+                is DeepShortcutView -> {
+                    child.background = GroupedMenuStyle.surface(
+                        context, child === rows.first(), child === rows.last()
+                    )
+                    (child.layoutParams as ViewGroup.MarginLayoutParams).bottomMargin =
+                        if (child === rows.last()) 0
+                        else resources.getDimensionPixelSize(R.dimen.arkui_menu_item_spacing)
+                }
+                is ImageView -> {
+                    child.imageTintList = ColorStateList.valueOf(
+                        context.getColor(R.color.materialColorPrimary)
+                    )
+                    child.background = RippleDrawable(
+                        context.getColorStateList(R.color.arkui_app_icon_menu_ripple),
+                        menuShape(context.getColor(R.color.materialColorSurfaceContainerHigh), 16f),
+                        menuShape(Color.WHITE, 16f),
+                    )
+                }
+                is ViewGroup -> {
+                    if (group === this) {
+                        // The parent reserves these group gaps when orienting the popup.
+                        (child.layoutParams as ViewGroup.MarginLayoutParams).bottomMargin =
+                            if (beforeDisplay || child === children.last()) 0
+                            else getChildContainerMargin()
+                    }
+                    styleMenuGroup(child, beforeDisplay)
+                }
+            }
+        }
+    }
+
+    private fun styleShortcutRow(view: DeepShortcutView, systemShortcut: Boolean) {
+        view.minimumHeight = shortcutHeight.toInt()
+        view.layoutParams.height = ViewGroup.LayoutParams.WRAP_CONTENT
+        view.layoutParams.width = containerWidth
+        view.bubbleText.apply {
+            minimumHeight = shortcutHeight.toInt()
+            textSize = 16f
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            includeFontPadding = false
+            setTextColor(context.getColor(R.color.materialColorOnSurface))
+            setPaddingRelative(dp(64), dp(12), dp(20), dp(12))
+        }
+        val icon = view.iconView
+        icon.layoutParams = (icon.layoutParams as ViewGroup.MarginLayoutParams).apply {
+            width = dp(if (systemShortcut) 40 else 32)
+            height = width
+            marginStart = dp(if (systemShortcut) 12 else 16)
+        }
+        if (systemShortcut) {
+            GroupedMenuStyle.styleSystemIcon(icon)
+        }
+    }
 
     override fun getAccessibilityInitialFocusView(): View {
         return systemShortcutContainer?.getChildAt(0) ?: super.getAccessibilityInitialFocusView()
@@ -142,7 +235,7 @@ private constructor(
         deepShortcutCount: Int,
         systemShortcuts: List<SystemShortcut<*>>,
     ) {
-        containerWidth = resources.getDimensionPixelSize(R.dimen.bg_popup_item_width)
+        containerWidth = resources.getDimensionPixelSize(R.dimen.arkui_app_icon_menu_width)
 
         if (deepShortcutCount > 0) {
             addAllShortcuts(deepShortcutCount, systemShortcuts)
@@ -190,12 +283,14 @@ private constructor(
                 R.layout.system_shortcut_rows_container,
                 R.layout.system_shortcut,
             )
-            val startingHeight = ((shortcutHeight * systemShortcuts.size) + mChildContainerMargin)
+            val itemSpacing = resources.getDimensionPixelSize(R.dimen.arkui_menu_item_spacing)
+            val startingHeight = (shortcutHeight + itemSpacing) * systemShortcuts.size +
+                getChildContainerMargin()
             addDeepShortcuts(deepShortcutCount, startingHeight)
             return
         }
 
-        currentHeight = shortcutHeight + mChildContainerMargin
+        currentHeight = shortcutHeight + getChildContainerMargin()
 
         collapseEligibleSystemShortcutsIfOverThreshold(systemShortcuts)
         addDeepShortcuts(deepShortcutCount, currentHeight)
@@ -217,10 +312,7 @@ private constructor(
         containerWidth =
             max(
                     containerWidth.toDouble(),
-                    (collapsibleSystemShortcuts.size *
-                            resources.getDimensionPixelSize(
-                                R.dimen.system_shortcut_header_icon_touch_size
-                            ))
+                    (collapsibleSystemShortcuts.size * dp(56))
                         .toDouble(),
                 )
                 .toInt()
@@ -236,7 +328,8 @@ private constructor(
                 R.layout.system_shortcut,
             )
             currentHeight +=
-                ((shortcutHeight * nonCollapsibleSystemShortcuts.size) + mChildContainerMargin)
+                (shortcutHeight + resources.getDimensionPixelSize(R.dimen.arkui_menu_item_spacing)) *
+                    nonCollapsibleSystemShortcuts.size + getChildContainerMargin()
         }
     }
 
@@ -274,6 +367,7 @@ private constructor(
         }
 
         systemShortcutContainer = inflateAndAdd(R.layout.system_shortcut_icons_container, this)
+        systemShortcutContainer?.layoutParams?.height = shortcutHeight.toInt()
 
         for (i in systemShortcuts.indices) {
             @LayoutRes var shortcutIconLayout = R.layout.system_shortcut_icon_only
@@ -304,7 +398,7 @@ private constructor(
         var height = startingHeight
         deepShortcutContainer = inflateAndAdd(R.layout.deep_shortcut_container, this)
         for (i in deepShortcutCount downTo 1) {
-            height += shortcutHeight
+            height += shortcutHeight + resources.getDimensionPixelSize(R.dimen.arkui_menu_item_spacing)
             // when there is limited vertical screen space, limit total popup rows to fit
             if (
                 height >=
@@ -312,7 +406,7 @@ private constructor(
             )
                 break
             val v = inflateAndAdd<DeepShortcutView>(R.layout.deep_shortcut, deepShortcutContainer)
-            v.layoutParams.width = containerWidth
+            styleShortcutRow(v, systemShortcut = false)
             deepShortcuts.add(v)
         }
         updateHiddenShortcuts()
@@ -334,6 +428,7 @@ private constructor(
     fun initializeWidgetShortcut(container: ViewGroup?, info: SystemShortcut<*>) {
         val view = initializeSystemShortcut(R.layout.system_shortcut, container, info, false)
         view.layoutParams.width = containerWidth
+        assignMarginsAndBackgrounds(this)
     }
 
     /**
@@ -364,9 +459,18 @@ private constructor(
                     )
             }
             info.setIconAndLabelFor(shortcutView.iconView, shortcutView.bubbleText)
+            styleShortcutRow(shortcutView, systemShortcut = true)
         } else if (view is ImageView) {
             // System shortcut is just an icon
             info.setIconAndContentDescriptionFor(view)
+            view.layoutParams.width = dp(48)
+            view.layoutParams.height = dp(48)
+            (view.layoutParams as ViewGroup.MarginLayoutParams).apply {
+                marginStart = dp(4)
+                marginEnd = dp(4)
+            }
+            view.setPadding(dp(12), dp(12), dp(12), dp(12))
+            view.isFocusable = true
             if (shouldAppendSpacer) inflateAndAdd<View>(R.layout.system_shortcut_spacer, container)
             view.setTooltipText(view.getContentDescription())
         }
@@ -534,7 +638,10 @@ private constructor(
             updateIconUi: Boolean = true,
         ): PopupContainerWithArrow<T> where T : Context, T : ActivityContext {
             val container =
-                PopupContainerWithArrow<T>(context, originalView, itemInfo, updateIconUi)
+                PopupContainerWithArrow<T>(
+                    ContextThemeWrapper(context, R.style.ThemeOverlay_Arkui_AppIconMenu),
+                    originalView, itemInfo, updateIconUi,
+                )
             container.id = R.id.popup_container
             container.clipChildren = false
             container.clipToPadding = false

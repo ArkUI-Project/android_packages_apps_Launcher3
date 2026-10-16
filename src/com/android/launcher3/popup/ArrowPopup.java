@@ -218,6 +218,10 @@ public abstract class ArrowPopup<T extends Context & ActivityContext>
         assignMarginsAndBackgrounds(viewGroup, Color.TRANSPARENT);
     }
 
+    protected int getChildContainerMargin() {
+        return mChildContainerMargin;
+    }
+
     /**
      * @param backgroundColor When Color.TRANSPARENT, we get color from {@link #mColors}.
      *                        Otherwise, we will use this color for all child views.
@@ -246,7 +250,7 @@ public abstract class ArrowPopup<T extends Context & ActivityContext>
             if (view.getVisibility() == VISIBLE) {
                 if (lastView != null && (isShortcutContainer(lastView))) {
                     MarginLayoutParams mlp = (MarginLayoutParams) lastView.getLayoutParams();
-                    mlp.bottomMargin = mChildContainerMargin;
+                    mlp.bottomMargin = getChildContainerMargin();
                 }
                 lastView = view;
                 MarginLayoutParams mlp = (MarginLayoutParams) lastView.getLayoutParams();
@@ -423,7 +427,7 @@ public abstract class ArrowPopup<T extends Context & ActivityContext>
                 numVisibleChildren++;
             }
         }
-        int childMargins = (numVisibleChildren - 1) * mChildContainerMargin;
+        int childMargins = (numVisibleChildren - 1) * getChildContainerMargin();
         int height = getMeasuredHeight() + extraVerticalSpace + childMargins;
         int width = getMeasuredWidth() + getPaddingLeft() + getPaddingRight();
 

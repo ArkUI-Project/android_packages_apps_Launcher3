@@ -33,7 +33,6 @@ import android.view.View
 import android.view.ViewOutlineProvider
 import android.widget.LinearLayout
 import android.widget.TextView
-import androidx.core.content.res.ResourcesCompat
 import com.android.app.animation.Interpolators
 import com.android.app.animation.Interpolators.clampToProgress
 import com.android.launcher3.AbstractFloatingView
@@ -41,6 +40,7 @@ import com.android.launcher3.Flags.enableRefactorTaskThumbnail
 import com.android.launcher3.R
 import com.android.launcher3.anim.AnimationSuccessListener
 import com.android.launcher3.anim.RoundedRectRevealOutlineProvider
+import com.android.launcher3.popup.GroupedMenuStyle
 import com.android.launcher3.popup.SystemShortcut
 import com.android.launcher3.util.MultiPropertyFactory
 import com.android.launcher3.util.OverviewReleaseFlags.enableOverviewIconMenu
@@ -93,7 +93,7 @@ constructor(context: Context?, attrs: AttributeSet?, defStyleAttr: Int = 0) :
     private val maxMenuBottom by lazy { taskbarTop - recentsViewContainer.dragLayer.insets.top }
 
     init {
-        clipToOutline = true
+        clipToOutline = false
     }
 
     override fun onControllerInterceptTouchEvent(ev: MotionEvent): Boolean {
@@ -172,24 +172,18 @@ constructor(context: Context?, attrs: AttributeSet?, defStyleAttr: Int = 0) :
             menuOption: SystemShortcut<*> ->
             addMenuOption(menuOption)
         }
+        GroupedMenuStyle.applyToGroup(optionLayout)
     }
 
     private fun addMenuOption(menuOption: SystemShortcut<*>) {
         val menuOptionView =
             recentsViewContainer.layoutInflater.inflate(R.layout.task_view_menu_option, this, false)
                 as LinearLayout
-        if (enableOverviewIconMenu()) {
-            menuOptionView.background =
-                ResourcesCompat.getDrawable(
-                    resources,
-                    R.drawable.app_chip_menu_item_bg,
-                    context.theme,
-                )
-        }
         menuOption.setIconAndLabelFor(
             menuOptionView.findViewById(R.id.icon),
             menuOptionView.findViewById(R.id.text),
         )
+        GroupedMenuStyle.styleSystemIcon(menuOptionView.findViewById(R.id.icon))
         val lp = menuOptionView.layoutParams as LayoutParams
         taskView.pagedOrientationHandler.setLayoutParamsForTaskMenuOptionItem(
             lp,
@@ -231,19 +225,9 @@ constructor(context: Context?, attrs: AttributeSet?, defStyleAttr: Int = 0) :
         val divider = ShapeDrawable(RectShape())
         divider.paint.color = resources.getColor(android.R.color.transparent)
         val dividerSpacing = resources.getDimension(R.dimen.task_menu_spacing).toInt()
-        optionLayout.showDividers =
-            if (enableOverviewIconMenu()) SHOW_DIVIDER_NONE else SHOW_DIVIDER_MIDDLE
-
-        optionLayout.background =
-            if (enableOverviewIconMenu()) {
-                ResourcesCompat.getDrawable(resources, R.drawable.app_chip_menu_bg, context.theme)
-            } else {
-                null
-            }
-        if (enableOverviewIconMenu()) {
-            background =
-                ResourcesCompat.getDrawable(resources, R.drawable.app_chip_menu_bg, context.theme)
-        }
+        optionLayout.showDividers = SHOW_DIVIDER_MIDDLE
+        optionLayout.background = null
+        background = null
 
         orientationHandler.setTaskOptionsMenuLayoutOrientation(
             deviceProfile,
@@ -271,7 +255,6 @@ constructor(context: Context?, attrs: AttributeSet?, defStyleAttr: Int = 0) :
 
         var taskInsetMargin = resources.getDimension(R.dimen.task_card_margin)
         if (enableOverviewIconMenu()) {
-            elevation = resources.getDimension(R.dimen.task_thumbnail_icon_menu_elevation)
             taskInsetMargin = 0f
         }
 

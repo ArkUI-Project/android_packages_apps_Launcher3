@@ -9,18 +9,27 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.res.ColorStateList;
 import android.graphics.Canvas;
+import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.Rect;
 import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.RippleDrawable;
 import android.os.Bundle;
+import android.text.TextUtils;
 import android.view.ContextThemeWrapper;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewTreeObserver;
+import android.view.accessibility.AccessibilityNodeInfo;
+import android.widget.Button;
 import android.widget.FrameLayout;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.TextView;
+
+import androidx.core.graphics.ColorUtils;
 
 import com.android.launcher3.AbstractFloatingView;
 import com.android.launcher3.BubbleTextView;
@@ -284,6 +293,59 @@ public final class HomeEditController implements StateHandler<LauncherState>, Dr
         return view;
     }
 
+    /** A single accessible action with a compact icon tile and a separate, readable label. */
+    private final class EditAction extends LinearLayout {
+        EditAction(int label, int icon, int containerColor, int iconColor) {
+            super(mMaterialContext);
+            setOrientation(VERTICAL);
+            setGravity(Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+            setPadding(dp(2), dp(8), dp(2), dp(8));
+            setFocusable(true);
+            setContentDescription(mLauncher.getString(label));
+            setBackground(new RippleDrawable(
+                    ColorStateList.valueOf(ColorUtils.setAlphaComponent(
+                            color(R.color.materialColorPrimary), 31)),
+                    null, rounded(Color.WHITE, 20)));
+
+            ImageView image = new ImageView(mMaterialContext);
+            image.setImageResource(icon);
+            image.setImageTintList(actionColors(color(iconColor)));
+            image.setBackground(rounded(color(containerColor), 16));
+            image.setPadding(dp(12), dp(12), dp(12), dp(12));
+            image.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
+            addView(image, new LinearLayout.LayoutParams(dp(48), dp(48)));
+
+            TextView text = new TextView(mMaterialContext);
+            text.setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_LabelLarge);
+            text.setText(label);
+            text.setTextSize(13);
+            text.setTextColor(actionColors(color(R.color.materialColorOnSurface)));
+            text.setGravity(Gravity.CENTER);
+            text.setIncludeFontPadding(false);
+            text.setMaxLines(2);
+            text.setEllipsize(TextUtils.TruncateAt.END);
+            text.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
+            LinearLayout.LayoutParams textParams = new LinearLayout.LayoutParams(-1, -2);
+            textParams.topMargin = dp(8);
+            addView(text, textParams);
+        }
+
+        @Override public void setEnabled(boolean enabled) {
+            super.setEnabled(enabled);
+            for (int i = 0; i < getChildCount(); i++) getChildAt(i).setEnabled(enabled);
+        }
+
+        @Override public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
+            super.onInitializeAccessibilityNodeInfo(info);
+            info.setClassName(Button.class.getName());
+        }
+    }
+
+    private ColorStateList actionColors(int enabledColor) {
+        return new ColorStateList(new int[][]{new int[]{-android.R.attr.state_enabled}, new int[]{}},
+                new int[]{ColorUtils.setAlphaComponent(enabledColor, 97), enabledColor});
+    }
+
     private final class EditChrome extends FrameLayout implements Insettable {
         final MaterialButton done;
         final MaterialButton remove;
@@ -319,22 +381,27 @@ public final class HomeEditController implements StateHandler<LauncherState>, Dr
             doneParams.setMarginStart(dp(8));
             toolbar.addView(done, doneParams);
             actions = new LinearLayout(mMaterialContext);
-            actions.setGravity(Gravity.CENTER);
-            actions.setPadding(dp(12), dp(12), dp(12), dp(12));
-            actions.setBackground(rounded(color(R.color.materialColorSurfaceContainerLow), 32));
+            actions.setGravity(Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+            actions.setPadding(dp(6), dp(6), dp(6), dp(6));
+            actions.setBackground(rounded(color(R.color.materialColorSurfaceContainerLow), 28));
+            actions.setElevation(dp(4));
             int[] labels = {R.string.arkui_home_edit_wallpaper, R.string.arkui_home_edit_effects,
                     R.string.arkui_home_edit_widgets, R.string.arkui_home_edit_settings};
             int[] icons = {R.drawable.arkui_ic_edit_wallpaper, R.drawable.arkui_ic_edit_effects,
                     R.drawable.ic_widget, R.drawable.ic_setting};
+            int[] containers = {R.color.materialColorPrimaryContainer,
+                    R.color.materialColorSecondaryContainer, R.color.materialColorTertiaryContainer,
+                    R.color.materialColorSurfaceContainerHighest};
+            int[] foregrounds = {R.color.materialColorOnPrimaryContainer,
+                    R.color.materialColorOnSecondaryContainer, R.color.materialColorOnTertiaryContainer,
+                    R.color.materialColorOnSurfaceVariant};
             for (int i = 0; i < labels.length; i++) {
                 final int action = i;
-                MaterialButton actionButton = button(labels[i], R.attr.arkuiHomeEditActionStyle);
-                actionButton.setIconResource(icons[i]);
-                actionButton.setIconGravity(MaterialButton.ICON_GRAVITY_TEXT_TOP);
+                EditAction actionButton = new EditAction(labels[i], icons[i], containers[i], foregrounds[i]);
                 actionButton.setOnClickListener(v -> runAction(v, action));
                 if (i == 2) actionButton.setEnabled(Utilities.isWorkspaceEditAllowed(mLauncher));
-                LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, -1, 1);
-                if (i > 0) params.setMarginStart(dp(6));
+                LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, -2, 1);
+                if (i > 0) params.setMarginStart(dp(4));
                 actions.addView(actionButton, params);
             }
             addView(actions, new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL));

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copyright (C) 2026 The ArkUI Project; SPDX-License-Identifier: Apache-2.0 -->
+<resources>
+    <!-- Scoped to app icon menus; wallpaper and widget menus retain their own themes. -->
+    <style name="ThemeOverlay.Arkui.AppIconMenu" parent="">
+        <item name="android:dialogCornerRadius">28dp</item>
+        <item name="android:colorControlHighlight">@color/arkui_app_icon_menu_ripple</item>
+        <item name="popupTextColor">@color/materialColorOnSurface</item>
+        <item name="popupColorPrimary">@color/materialColorSurfaceContainerLow</item>
+        <item name="popupColorSecondary">@color/materialColorSurfaceContainer</item>
+        <item name="popupColorTertiary">@color/arkui_app_icon_menu_ripple</item>
+    </style>
+    <dimen name="arkui_app_icon_menu_width">256dp</dimen>
+    <dimen name="arkui_app_icon_menu_row_height">64dp</dimen>
+    <dimen name="arkui_menu_outer_radius">28dp</dimen>
+    <dimen name="arkui_menu_inner_radius">4dp</dimen>
+    <dimen name="arkui_menu_item_spacing">2dp</dimen>
+    <dimen name="arkui_menu_group_spacing">16dp</dimen>
+</resources>

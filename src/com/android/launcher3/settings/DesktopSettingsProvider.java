@@ -24,6 +24,7 @@ import com.android.launcher3.BuildConfig;
 import com.android.launcher3.Flags;
 import com.android.launcher3.InvariantDeviceProfile;
 import com.android.launcher3.LauncherFiles;
+import com.android.launcher3.LauncherPrefs;
 import com.android.launcher3.R;
 import com.android.launcher3.anim.DesktopAnimationSettings;
 import com.android.launcher3.graphics.ThemeManager;
@@ -34,6 +35,9 @@ import com.android.launcher3.util.DisplayController;
 import com.android.launcher3.views.AskAiView;
 
 import java.util.Arrays;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -44,6 +48,7 @@ public class DesktopSettingsProvider extends ContentProvider {
     private static final String ICON_SHAPE = ThemeManager.PREF_ICON_SHAPE.getSharedPrefKey();
     private static final String ICON_SIZE = DESKTOP_ICON_SIZE.getSharedPrefKey();
     private static final String ICON_LABELS = "pref_desktop_show_labels";
+    private static final String GRID = "pref_desktop_grid";
     private static final Map<String, Boolean> DEFAULTS = Map.ofEntries(
             Map.entry("pref_workspace_lock", false),
             Map.entry("pref_standard_desktop", true),
@@ -85,7 +90,8 @@ public class DesktopSettingsProvider extends ContentProvider {
                 && (int) value >= parameter.min() && (int) value <= parameter.max();
         final boolean validShape = ICON_SHAPE.equals(key) && isValidShape(value);
         final boolean validSize = ICON_SIZE.equals(key) && isValidSize(value);
-        if (write && !validBoolean && !validNumber && !validShape && !validSize) {
+        final boolean validGrid = GRID.equals(key) && value instanceof String;
+        if (write && !validBoolean && !validNumber && !validShape && !validSize && !validGrid) {
             throw new IllegalArgumentException("Unknown preference or invalid value");
         }
         if (writeIcons && (extras == null || !isValidSize(extras.get(ICON_SIZE))
@@ -99,7 +105,7 @@ public class DesktopSettingsProvider extends ContentProvider {
                     LauncherFiles.SHARED_PREFERENCES_KEY, Context.MODE_PRIVATE);
             // Commit on the Binder thread, never on the launcher UI thread. The normal
             // SharedPreferences listeners still update rotation, labels, themes and gestures.
-            if (write || writeIcons || reset) {
+            if ((write && !validGrid) || writeIcons || reset) {
                 SharedPreferences.Editor editor = preferences.edit();
                 if (writeIcons) {
                     editor.putInt(ICON_SIZE, extras.getInt(ICON_SIZE));
@@ -119,7 +125,17 @@ public class DesktopSettingsProvider extends ContentProvider {
                 }
                 if (!editor.commit()) return null;
             }
-            return MAIN_EXECUTOR.submit(() -> readPreferences(preferences)).get(3, TimeUnit.SECONDS);
+            return MAIN_EXECUTOR.submit(() -> {
+                if (write && validGrid) {
+                    final InvariantDeviceProfile idp = InvariantDeviceProfile.INSTANCE.get(getContext());
+                    if (idp.getGridOptionFromName(getContext(), (String) value) == null) {
+                        throw new IllegalArgumentException("Unsupported desktop grid");
+                    }
+                    // Reuse normal grid migration instead of creating a fresh workspace.
+                    idp.setCurrentGrid((String) value);
+                }
+                return readPreferences(preferences);
+            }).get(3, TimeUnit.SECONDS);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return null;
@@ -186,6 +202,21 @@ public class DesktopSettingsProvider extends ContentProvider {
         sizeSpec.putInt("step", 5);
         sizeSpec.putInt("default", 115);
         final InvariantDeviceProfile idp = InvariantDeviceProfile.INSTANCE.get(context);
+        final List<InvariantDeviceProfile.GridOption> grids = idp.parseAllGridOptions(context);
+        grids.sort(Comparator.comparingInt((InvariantDeviceProfile.GridOption grid) -> grid.numColumns)
+                .thenComparingInt(grid -> grid.numRows));
+        final String[] gridNames = new String[grids.size()];
+        final String[] gridLabels = new String[grids.size()];
+        for (int i = 0; i < grids.size(); i++) {
+            final InvariantDeviceProfile.GridOption grid = grids.get(i);
+            gridNames[i] = grid.name;
+            gridLabels[i] = String.format(Locale.getDefault(), "%d × %d", grid.numColumns, grid.numRows);
+        }
+        final Bundle gridOptions = new Bundle();
+        gridOptions.putStringArray("values", gridNames);
+        gridOptions.putStringArray("labels", gridLabels);
+        values.putString(GRID, LauncherPrefs.get(context).get(LauncherPrefs.GRID_NAME));
+        available.putBoolean(GRID, grids.size() > 1);
         sizeSpec.putFloat("base_size_dp", idp.iconSize[0] / idp.desktopIconScale);
         available.putBoolean("pref_allowRotation", !info.isTablet(info.realBounds)
                 && (!Flags.oneGridSpecs() || info.isRotationAllowed()));
@@ -204,6 +235,7 @@ public class DesktopSettingsProvider extends ContentProvider {
         result.putBundle("available", available);
         result.putBundle("icon_shapes", iconShapes);
         result.putBundle("icon_size", sizeSpec);
+        result.putBundle("grid_options", gridOptions);
         result.putBundle("motion", DesktopAnimationSettings.describe(preferences));
         return result;
     }
