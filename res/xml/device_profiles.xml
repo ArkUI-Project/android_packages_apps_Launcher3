@@ -169,6 +169,39 @@
     </grid-option>
 
     <grid-option
+        launcher:name="4_by_6"
+        launcher:numRows="6"
+        launcher:numColumns="4"
+        launcher:numFolderRows="4"
+        launcher:numFolderColumns="3"
+        launcher:numHotseatIcons="4"
+        launcher:dbFile="launcher_4_by_6.db"
+        launcher:defaultLayoutId="@xml/default_workspace_4x5"
+        launcher:deviceCategory="phone" >
+
+        <display-option
+            launcher:name="Compact Phone"
+            launcher:minWidthDps="320"
+            launcher:minHeightDps="567"
+            launcher:iconImageSize="56"
+            launcher:iconTextSize="12.0"
+            launcher:allAppsBorderSpace="16"
+            launcher:allAppsCellHeight="104"
+            launcher:canBeDefault="true" />
+
+        <display-option
+            launcher:name="Large Phone"
+            launcher:minWidthDps="406"
+            launcher:minHeightDps="694"
+            launcher:iconImageSize="60"
+            launcher:iconTextSize="13.0"
+            launcher:allAppsBorderSpace="16"
+            launcher:allAppsCellHeight="104"
+            launcher:canBeDefault="true" />
+
+    </grid-option>
+
+    <grid-option
         launcher:name="5_by_5"
         launcher:numRows="5"
         launcher:numColumns="5"

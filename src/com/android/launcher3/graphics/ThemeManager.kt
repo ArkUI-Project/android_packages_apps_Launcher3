@@ -213,7 +213,8 @@ constructor(
     companion object {
 
         @JvmField val INSTANCE = DaggerSingletonObject(LauncherAppComponent::getThemeManager)
-        @JvmField val PREF_ICON_SHAPE = backedUpItem("icon_shape_model", "")
+        @JvmField
+        val PREF_ICON_SHAPE = backedUpItem("icon_shape_model", ShapesProvider.ROUNDED_RECT_KEY)
 
         @JvmField val DEFAULT_SHAPE_DELEGATE = pickBestShape(shapeStr = "")
 

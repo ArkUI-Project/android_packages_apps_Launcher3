@@ -22,11 +22,16 @@ import android.os.Process;
 import com.android.launcher3.BuildConfig;
 import com.android.launcher3.Flags;
 import com.android.launcher3.LauncherFiles;
+import com.android.launcher3.R;
 import com.android.launcher3.anim.DesktopAnimationSettings;
+import com.android.launcher3.graphics.ThemeManager;
+import com.android.launcher3.shapes.IconShapeModel;
+import com.android.launcher3.shapes.ShapesProvider;
 import com.android.launcher3.states.RotationHelper;
 import com.android.launcher3.util.DisplayController;
 import com.android.launcher3.views.AskAiView;
 
+import java.util.Arrays;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -34,9 +39,10 @@ import java.util.concurrent.TimeoutException;
 
 /** Narrow bridge to the existing, backed-up Launcher preferences used by system Settings. */
 public class DesktopSettingsProvider extends ContentProvider {
+    private static final String ICON_SHAPE = ThemeManager.PREF_ICON_SHAPE.getSharedPrefKey();
     private static final Map<String, Boolean> DEFAULTS = Map.ofEntries(
             Map.entry("pref_workspace_lock", false),
-            Map.entry("pref_standard_desktop", false),
+            Map.entry("pref_standard_desktop", true),
             Map.entry("pref_add_icon_to_home", true),
             Map.entry("pref_allowRotation", false),
             Map.entry("pref_enable_minus_one", true),
@@ -71,7 +77,10 @@ public class DesktopSettingsProvider extends ContentProvider {
                 && value instanceof Boolean;
         final boolean validNumber = parameter != null && value instanceof Integer
                 && (int) value >= parameter.min() && (int) value <= parameter.max();
-        if (write && !validBoolean && !validNumber) {
+        final boolean validShape = ICON_SHAPE.equals(key) && value instanceof String
+                && ("".equals(value) || Arrays.stream(ShapesProvider.INSTANCE.getIconShapes())
+                        .anyMatch(shape -> shape.getKey().equals(value)));
+        if (write && !validBoolean && !validNumber && !validShape) {
             throw new IllegalArgumentException("Unknown preference or invalid value");
         }
         final long identity = Binder.clearCallingIdentity();
@@ -89,6 +98,8 @@ public class DesktopSettingsProvider extends ContentProvider {
                     }
                 } else if (validNumber) {
                     editor.putInt(key, (int) value);
+                } else if (validShape) {
+                    editor.putString(key, (String) value);
                 } else {
                     editor.putBoolean(key, (boolean) value);
                 }
@@ -120,6 +131,20 @@ public class DesktopSettingsProvider extends ContentProvider {
         for (String key : DEFAULTS.keySet()) {
             available.putBoolean(key, true);
         }
+        final IconShapeModel[] shapes = ShapesProvider.INSTANCE.getIconShapes();
+        final String[] shapeKeys = new String[shapes.length + 1];
+        final String[] shapeLabels = new String[shapes.length + 1];
+        shapeKeys[0] = "";
+        shapeLabels[0] = context.getString(R.string.arkui_icon_shape_system);
+        for (int i = 0; i < shapes.length; i++) {
+            shapeKeys[i + 1] = shapes[i].getKey();
+            shapeLabels[i + 1] = context.getString(shapes[i].getTitleId());
+        }
+        values.putString(ICON_SHAPE, ThemeManager.PREF_ICON_SHAPE.get(context));
+        available.putBoolean(ICON_SHAPE, shapes.length > 1);
+        final Bundle iconShapes = new Bundle();
+        iconShapes.putStringArray("values", shapeKeys);
+        iconShapes.putStringArray("labels", shapeLabels);
         available.putBoolean("pref_allowRotation", !info.isTablet(info.realBounds)
                 && (!Flags.oneGridSpecs() || info.isRotationAllowed()));
         final LauncherApps apps = context.getSystemService(LauncherApps.class);
@@ -135,6 +160,7 @@ public class DesktopSettingsProvider extends ContentProvider {
         final Bundle result = new Bundle();
         result.putBundle("values", values);
         result.putBundle("available", available);
+        result.putBundle("icon_shapes", iconShapes);
         result.putBundle("motion", DesktopAnimationSettings.describe(preferences));
         return result;
     }

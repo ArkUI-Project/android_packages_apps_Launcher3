@@ -112,6 +112,7 @@ public class InvariantDeviceProfile {
             new DaggerSingletonObject<>(LauncherAppComponent::getIDP);
 
     public static final String GRID_NAME_PREFS_KEY = "idp_grid_name";
+    private static final String DEFAULT_PHONE_GRID = "4_by_6";
     public static final String NON_FIXED_LANDSCAPE_GRID_NAME_PREFS_KEY =
             "idp_non_fixed_landscape_grid_name";
 
@@ -619,6 +620,15 @@ public class InvariantDeviceProfile {
             for (DisplayOption option : profiles) {
                 if (gridName.equals(option.grid.name) && (option.grid.isEnabled(
                         displayInfo.getDeviceType()) || allowDisabledGrid)) {
+                    filteredProfiles.add(option);
+                }
+            }
+        }
+        if (TextUtils.isEmpty(gridName) && displayInfo.getDeviceType() == TYPE_PHONE
+                && !isFixedLandscapeMode) {
+            // Only choose the ArkUI default on first use; keep saved grids and tablet profiles.
+            for (DisplayOption option : profiles) {
+                if (DEFAULT_PHONE_GRID.equals(option.grid.name) && option.canBeDefault) {
                     filteredProfiles.add(option);
                 }
             }

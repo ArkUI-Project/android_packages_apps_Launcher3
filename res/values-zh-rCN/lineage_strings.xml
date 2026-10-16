@@ -43,8 +43,8 @@
     <string name="pebble_shape_title">鹅卵石形</string>
     <string name="vessel_shape_title">船形</string>
     <string name="pure_square_shape_title">正方形</string>
-    <string name="squircle_shape_title">圆角矩形</string>
+    <string name="squircle_shape_title">超椭圆</string>
     <string name="tapered_rect_shape_title">八边形</string>
     <string name="teardrop_shape_title">泪珠形</string>
-    <string name="rounded_rect_shape_title">圆角矩形</string>
+    <string name="rounded_rect_shape_title">圆角方形</string>
 </resources>

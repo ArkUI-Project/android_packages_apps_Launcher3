@@ -73,5 +73,5 @@
     <string name="squircle_shape_title">Squircle</string>
     <string name="tapered_rect_shape_title">Tapered rect</string>
     <string name="teardrop_shape_title">Teardrop</string>
-    <string name="rounded_rect_shape_title">Rounded rect</string>
+    <string name="rounded_rect_shape_title">Rounded square</string>
 </resources>
