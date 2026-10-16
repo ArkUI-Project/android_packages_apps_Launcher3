@@ -25,6 +25,7 @@ import com.android.launcher3.LauncherFiles;
 import com.android.launcher3.anim.DesktopAnimationSettings;
 import com.android.launcher3.states.RotationHelper;
 import com.android.launcher3.util.DisplayController;
+import com.android.launcher3.views.AskAiView;
 
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
@@ -42,6 +43,7 @@ public class DesktopSettingsProvider extends ContentProvider {
             Map.entry("pref_drawer_open_keyboard", false),
             Map.entry("pref_allapps_themed_icons", false),
             Map.entry("pref_desktop_show_labels", true),
+            Map.entry("pref_show_ask_ai", true),
             Map.entry("pref_drawer_show_labels", true),
             Map.entry("pref_sleep_gesture", false),
             Map.entry("pref_landscape_app_animation", true),
@@ -124,6 +126,8 @@ public class DesktopSettingsProvider extends ContentProvider {
         available.putBoolean("pref_enable_minus_one", apps != null && apps.isPackageEnabled(
                 "com.google.android.googlequicksearchbox", Process.myUserHandle()));
         available.putBoolean("pref_icon_badging", BuildConfig.NOTIFICATION_DOTS_ENABLED);
+        available.putBoolean("pref_show_ask_ai",
+                AskAiView.isAssistantAvailable(context));
         available.putBoolean("pref_suggestions", apps != null && apps.isPackageEnabled(
                 "com.google.android.as", Process.myUserHandle())
                 && new Intent("android.settings.ACTION_CONTENT_SUGGESTIONS_SETTINGS")

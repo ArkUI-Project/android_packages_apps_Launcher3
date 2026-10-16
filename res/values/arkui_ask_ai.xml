@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copyright (C) 2026 The ArkUI Project; SPDX-License-Identifier: Apache-2.0 -->
+<resources>
+    <string name="arkui_ask_ai">Ask AI</string>
+    <string name="arkui_ask_ai_description">Open ArkAI</string>
+    <string name="arkui_ask_ai_unavailable">Unable to open ArkAI</string>
+    <dimen name="arkui_ask_ai_padding">16dp</dimen>
+    <dimen name="arkui_ask_ai_icon_padding">8dp</dimen>
+    <dimen name="arkui_ask_ai_vertical_padding">8dp</dimen>
+    <dimen name="arkui_ask_ai_surface_inset">6dp</dimen>
+    <dimen name="arkui_ask_ai_surface_height">36dp</dimen>
+    <color name="arkui_ask_ai_surface">@android:color/system_surface_container_light</color>
+    <color name="arkui_ask_ai_foreground">@android:color/system_on_surface_light</color>
+</resources>

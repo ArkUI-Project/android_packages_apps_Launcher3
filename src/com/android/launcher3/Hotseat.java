@@ -48,6 +48,7 @@ import com.android.launcher3.util.MultiPropertyFactory.MultiProperty;
 import com.android.launcher3.util.MultiTranslateDelegate;
 import com.android.launcher3.util.MultiValueAlpha;
 import com.android.launcher3.views.ActivityContext;
+import com.android.launcher3.views.AskAiView;
 
 import java.io.PrintWriter;
 import java.lang.annotation.Retention;
@@ -94,6 +95,7 @@ public class Hotseat extends CellLayout implements Insettable {
     private final MultiPropertyFactory mIconsTranslationXFactory;
 
     private final View mQsb;
+    private final AskAiView mAskAi;
 
     public Hotseat(Context context) {
         this(context, null);
@@ -114,6 +116,10 @@ public class Hotseat extends CellLayout implements Insettable {
         }
 
         addView(mQsb);
+        mAskAi = (AskAiView) LayoutInflater.from(context).inflate(R.layout.arkui_ask_ai,
+                this, false);
+        addView(mAskAi);
+        mAskAi.setOnPresentationChangedListener(this::updatePageIndicatorVisibility);
         mIconsAlphaChannels = new MultiValueAlpha(getShortcutsAndWidgets(),
                 ALPHA_CHANNEL_CHANNELS_COUNT);
         mIconsAlphaChannels.setUpdateVisibility(true);
@@ -274,10 +280,12 @@ public class Hotseat extends CellLayout implements Insettable {
             mQsb.setVisibility(View.VISIBLE);
             lp.gravity = Gravity.BOTTOM;
             lp.width = ViewGroup.LayoutParams.MATCH_PARENT;
-            lp.height = grid.hotseatBarSizePx;
+            // The workspace already reserves this row above the icons for home controls.
+            lp.height = grid.hotseatBarSizePx + getAskAiRowHeight(grid);
         }
 
         Rect padding = grid.getHotseatLayoutPadding(getContext());
+        padding.top += getAskAiRowHeight(grid);
         setPadding(padding.left, padding.top, padding.right, padding.bottom);
         setLayoutParams(lp);
         InsettableFrameLayout.dispatchInsets(this, insets);
@@ -286,6 +294,19 @@ public class Hotseat extends CellLayout implements Insettable {
     public void setWorkspace(Workspace<?> w) {
         mWorkspace = w;
         setCellLayoutContainer(w);
+        updatePageIndicatorVisibility();
+    }
+
+    private int getAskAiRowHeight(DeviceProfile dp) {
+        return dp.isVerticalBarLayout() ? 0
+                : dp.mWorkspaceProfile.getWorkspacePageIndicatorHeight();
+    }
+
+    private void updatePageIndicatorVisibility() {
+        if (mWorkspace != null && mWorkspace.getPageIndicator() != null) {
+            View container = (View) mWorkspace.getPageIndicator().getParent();
+            container.setVisibility(mAskAi.getVisibility() == VISIBLE ? INVISIBLE : VISIBLE);
+        }
     }
 
     @Override
@@ -324,6 +345,11 @@ public class Hotseat extends CellLayout implements Insettable {
         DeviceProfile dp = mActivity.getDeviceProfile();
         mQsb.measure(makeMeasureSpec(dp.hotseatQsbWidth, MeasureSpec.EXACTLY),
                 makeMeasureSpec(dp.getHotseatProfile().getQsbHeight(), MeasureSpec.EXACTLY));
+        if (mAskAi.getVisibility() != GONE) {
+            int width = Math.max(0, getMeasuredWidth() - getPaddingLeft() - getPaddingRight());
+            mAskAi.measure(makeMeasureSpec(width, MeasureSpec.AT_MOST),
+                    makeMeasureSpec(getAskAiRowHeight(dp), MeasureSpec.EXACTLY));
+        }
     }
 
     @Override
@@ -345,6 +371,12 @@ public class Hotseat extends CellLayout implements Insettable {
         int bottom = b - t - dp.getQsbOffsetY();
         int top = bottom - dp.getHotseatProfile().getQsbHeight();
         mQsb.layout(left, top, right, bottom);
+
+        if (mAskAi.getVisibility() != GONE) {
+            int askAiLeft = (r - l - mAskAi.getMeasuredWidth()) / 2;
+            mAskAi.layout(askAiLeft, 0, askAiLeft + mAskAi.getMeasuredWidth(),
+                    getAskAiRowHeight(dp));
+        }
     }
 
     /**

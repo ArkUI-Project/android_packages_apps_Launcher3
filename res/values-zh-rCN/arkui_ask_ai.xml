@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copyright (C) 2026 The ArkUI Project; SPDX-License-Identifier: Apache-2.0 -->
+<resources>
+    <string name="arkui_ask_ai">问 AI</string>
+    <string name="arkui_ask_ai_description">打开 ArkAI</string>
+    <string name="arkui_ask_ai_unavailable">无法打开 ArkAI</string>
+</resources>
