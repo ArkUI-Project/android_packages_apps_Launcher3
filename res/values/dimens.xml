@@ -44,8 +44,8 @@
     <dimen name="min_qsb_margin">8dp</dimen>
 
     <!-- Workspace page indicator -->
-    <!-- Reserve a full touch target for the Ask AI capsule above the hotseat. -->
-    <dimen name="workspace_page_indicator_height">48dp</dimen>
+    <!-- Reserve the 48dp Ask AI touch target and 24dp of space above the dock icons. -->
+    <dimen name="workspace_page_indicator_height">72dp</dimen>
     <dimen name="workspace_page_indicator_line_height">1dp</dimen>
     <dimen name="workspace_page_indicator_overlap_workspace">0dp</dimen>
 

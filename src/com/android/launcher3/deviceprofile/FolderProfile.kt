@@ -68,7 +68,8 @@ data class FolderProfile(
         ): FolderProfile {
             val folderLabelTextScale = res.getFloat(R.dimen.folder_label_text_scale)
             val minLabelTextSize: Int = pxFromSp(MIN_FOLDER_TEXT_SIZE_SP, metrics, scale)
-            var folderChildIconSizePx = responsiveWorkspaceCellSpec.iconSize
+            var folderChildIconSizePx =
+                Math.round(responsiveWorkspaceCellSpec.iconSize * inv.desktopIconScale)
             var folderChildTextSizePx = responsiveWorkspaceCellSpec.iconTextSize
             val folderCellWidthPx = responsiveFolderWidthSpec.cellSizePx
             // Reduce icon width if it's wider than the expected folder cell width

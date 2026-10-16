@@ -79,6 +79,7 @@ public final class AskAiView extends FrameLayout implements LauncherPrefChangeLi
         mLabel = findViewById(R.id.arkui_ask_ai_label);
         mSurface = new FrostedSurfaceDrawable(mSurfaceView,
                 getContext().getColor(R.color.arkui_ask_ai_surface), 0);
+        mSurface.setTintOpacity(.55f);
         mSurfaceView.setBackground(mSurface);
         mSurfaceView.setClipToOutline(true);
         mSurfaceView.addOnLayoutChangeListener((view, left, top, right, bottom,

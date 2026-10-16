@@ -22,6 +22,7 @@ import static com.android.launcher3.GridType.GRID_TYPE_NON_ONE_GRID;
 import static com.android.launcher3.GridType.GRID_TYPE_ONE_GRID;
 import static com.android.launcher3.LauncherPrefs.ALLAPPS_THEMED_ICONS;
 import static com.android.launcher3.LauncherPrefs.DB_FILE;
+import static com.android.launcher3.LauncherPrefs.DESKTOP_ICON_SIZE;
 import static com.android.launcher3.LauncherPrefs.DRAWER_OPEN_KEYBOARD;
 import static com.android.launcher3.LauncherPrefs.ENABLE_TWOLINE_ALLAPPS_TOGGLE;
 import static com.android.launcher3.LauncherPrefs.FIXED_LANDSCAPE_MODE;
@@ -186,6 +187,9 @@ public class InvariantDeviceProfile {
 
     public PointF[] allAppsCellSize;
     public float[] allAppsIconSize;
+
+    /** User-selected desktop and folder icon size, relative to the selected grid. */
+    public float desktopIconScale = 1f;
     public float[] allAppsIconTextSize;
     public PointF[] allAppsBorderSpaces;
 
@@ -327,13 +331,18 @@ public class InvariantDeviceProfile {
             } else if (ALLAPPS_THEMED_ICONS.getSharedPrefKey().equals(key) ||
                     DRAWER_OPEN_KEYBOARD.getSharedPrefKey().equals(key) ||
                     SHOW_DESKTOP_LABELS.getSharedPrefKey().equals(key) ||
+                    DESKTOP_ICON_SIZE.getSharedPrefKey().equals(key) ||
                     SHOW_DRAWER_LABELS.getSharedPrefKey().equals(key)) {
                 onConfigChanged();
             }
         };
-        prefs.addListener(prefListener, FIXED_LANDSCAPE_MODE, ENABLE_TWOLINE_ALLAPPS_TOGGLE);
+        prefs.addListener(prefListener, FIXED_LANDSCAPE_MODE, ENABLE_TWOLINE_ALLAPPS_TOGGLE,
+                DESKTOP_ICON_SIZE, SHOW_DESKTOP_LABELS, SHOW_DRAWER_LABELS,
+                ALLAPPS_THEMED_ICONS, DRAWER_OPEN_KEYBOARD);
         lifeCycle.addCloseable(() -> prefs.removeListener(prefListener,
-                FIXED_LANDSCAPE_MODE, ENABLE_TWOLINE_ALLAPPS_TOGGLE));
+                FIXED_LANDSCAPE_MODE, ENABLE_TWOLINE_ALLAPPS_TOGGLE,
+                DESKTOP_ICON_SIZE, SHOW_DESKTOP_LABELS, SHOW_DRAWER_LABELS,
+                ALLAPPS_THEMED_ICONS, DRAWER_OPEN_KEYBOARD));
 
         SimpleBroadcastReceiver localeReceiver = new SimpleBroadcastReceiver(context,
                 mMainExecutor, i -> onConfigChanged());
@@ -434,10 +443,17 @@ public class InvariantDeviceProfile {
 
         inlineNavButtonsEndSpacing = closestProfile.inlineNavButtonsEndSpacing;
 
-        iconSize = displayOption.iconSizes;
-        float maxIconSize = iconSize[0];
-        for (int i = 1; i < iconSize.length; i++) {
-            maxIconSize = Math.max(maxIconSize, iconSize[i]);
+        desktopIconScale = Math.max(80, Math.min(120, mPrefs.get(DESKTOP_ICON_SIZE))) / 100f;
+        // Never mutate the interpolated grid: repeated updates must not compound the scale.
+        iconSize = displayOption.iconSizes.clone();
+        for (int i = 0; i < iconSize.length; i++) {
+            iconSize[i] *= desktopIconScale;
+        }
+        float maxIconSize = 0;
+        for (int i = 0; i < iconSize.length; i++) {
+            // Smaller desktop icons must not reduce bitmap quality in the app drawer.
+            maxIconSize = Math.max(maxIconSize,
+                    Math.max(iconSize[i], displayOption.iconSizes[i]));
         }
         iconBitmapSize = ResourceUtils.pxFromDp(maxIconSize, metrics);
 
@@ -887,7 +903,7 @@ public class InvariantDeviceProfile {
             }
             if (iconSizePx > 0) {
                 this.iconSize[InvariantDeviceProfile.INDEX_DEFAULT] =
-                        Utilities.dpiFromPx(iconSizePx, dm.densityDpi);
+                        Utilities.dpiFromPx(iconSizePx, dm.densityDpi) * desktopIconScale;
             }
         } catch (Resources.NotFoundException ex) {
             Log.e(TAG, "Invalid Partner grid resource!", ex);

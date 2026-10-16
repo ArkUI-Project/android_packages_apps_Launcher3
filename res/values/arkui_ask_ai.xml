@@ -4,11 +4,12 @@
     <string name="arkui_ask_ai">Ask AI</string>
     <string name="arkui_ask_ai_description">Open ArkAI</string>
     <string name="arkui_ask_ai_unavailable">Unable to open ArkAI</string>
-    <dimen name="arkui_ask_ai_padding">16dp</dimen>
-    <dimen name="arkui_ask_ai_icon_padding">8dp</dimen>
-    <dimen name="arkui_ask_ai_vertical_padding">8dp</dimen>
-    <dimen name="arkui_ask_ai_surface_inset">6dp</dimen>
-    <dimen name="arkui_ask_ai_surface_height">36dp</dimen>
-    <color name="arkui_ask_ai_surface">@android:color/system_surface_container_light</color>
-    <color name="arkui_ask_ai_foreground">@android:color/system_on_surface_light</color>
+    <dimen name="arkui_ask_ai_width">168dp</dimen>
+    <dimen name="arkui_ask_ai_padding">20dp</dimen>
+    <dimen name="arkui_ask_ai_icon_padding">6dp</dimen>
+    <dimen name="arkui_ask_ai_vertical_padding">4dp</dimen>
+    <dimen name="arkui_ask_ai_surface_height">32dp</dimen>
+    <dimen name="arkui_ask_ai_bottom_spacing">24dp</dimen>
+    <color name="arkui_ask_ai_surface">@android:color/system_primary_container_light</color>
+    <color name="arkui_ask_ai_foreground">@android:color/system_on_primary_container_light</color>
 </resources>

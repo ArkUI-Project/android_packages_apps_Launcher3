@@ -56,6 +56,7 @@ public class FrostedSurfaceDrawable extends GradientDrawable
     };
     private Backdrop mBackdrop;
     private int mSurfaceColor;
+    private float mTintOpacity = 1f;
     private boolean mBlurred;
     private float[] mRadii;
     private boolean mDisposed;
@@ -103,10 +104,17 @@ public class FrostedSurfaceDrawable extends GradientDrawable
         updateFill();
     }
 
+    /** Changes the tint strength without reducing the independent backdrop blur. */
+    public void setTintOpacity(float opacity) {
+        mTintOpacity = Math.max(0f, Math.min(1f, opacity));
+        updateFill();
+    }
+
     private void updateFill() {
         boolean dark = ColorUtils.calculateLuminance(mSurfaceColor | 0xff000000) < .35;
         int alpha = mBlurred ? (dark ? 184 : 156) : 242;
-        super.setColor(ColorUtils.setAlphaComponent(mSurfaceColor, alpha));
+        super.setColor(ColorUtils.setAlphaComponent(mSurfaceColor,
+                Math.round(alpha * mTintOpacity)));
         super.setStroke(Math.max(1, Math.round(mDensity * .5f)),
                 ColorUtils.setAlphaComponent(Color.WHITE, dark ? 28 : 72));
     }

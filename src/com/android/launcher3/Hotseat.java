@@ -347,8 +347,10 @@ public class Hotseat extends CellLayout implements Insettable {
                 makeMeasureSpec(dp.getHotseatProfile().getQsbHeight(), MeasureSpec.EXACTLY));
         if (mAskAi.getVisibility() != GONE) {
             int width = Math.max(0, getMeasuredWidth() - getPaddingLeft() - getPaddingRight());
+            int height = Math.max(0, getAskAiRowHeight(dp) - getResources()
+                    .getDimensionPixelSize(R.dimen.arkui_ask_ai_bottom_spacing));
             mAskAi.measure(makeMeasureSpec(width, MeasureSpec.AT_MOST),
-                    makeMeasureSpec(getAskAiRowHeight(dp), MeasureSpec.EXACTLY));
+                    makeMeasureSpec(height, MeasureSpec.EXACTLY));
         }
     }
 
@@ -375,7 +377,7 @@ public class Hotseat extends CellLayout implements Insettable {
         if (mAskAi.getVisibility() != GONE) {
             int askAiLeft = (r - l - mAskAi.getMeasuredWidth()) / 2;
             mAskAi.layout(askAiLeft, 0, askAiLeft + mAskAi.getMeasuredWidth(),
-                    getAskAiRowHeight(dp));
+                    mAskAi.getMeasuredHeight());
         }
     }
 

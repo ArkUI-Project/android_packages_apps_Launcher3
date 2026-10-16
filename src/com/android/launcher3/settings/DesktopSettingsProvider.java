@@ -5,6 +5,7 @@
 package com.android.launcher3.settings;
 
 import static android.Manifest.permission.WRITE_SECURE_SETTINGS;
+import static com.android.launcher3.LauncherPrefs.DESKTOP_ICON_SIZE;
 import static com.android.launcher3.util.Executors.MAIN_EXECUTOR;
 
 import android.content.ContentProvider;
@@ -21,6 +22,7 @@ import android.os.Process;
 
 import com.android.launcher3.BuildConfig;
 import com.android.launcher3.Flags;
+import com.android.launcher3.InvariantDeviceProfile;
 import com.android.launcher3.LauncherFiles;
 import com.android.launcher3.R;
 import com.android.launcher3.anim.DesktopAnimationSettings;
@@ -40,6 +42,8 @@ import java.util.concurrent.TimeoutException;
 /** Narrow bridge to the existing, backed-up Launcher preferences used by system Settings. */
 public class DesktopSettingsProvider extends ContentProvider {
     private static final String ICON_SHAPE = ThemeManager.PREF_ICON_SHAPE.getSharedPrefKey();
+    private static final String ICON_SIZE = DESKTOP_ICON_SIZE.getSharedPrefKey();
+    private static final String ICON_LABELS = "pref_desktop_show_labels";
     private static final Map<String, Boolean> DEFAULTS = Map.ofEntries(
             Map.entry("pref_workspace_lock", false),
             Map.entry("pref_standard_desktop", true),
@@ -66,7 +70,9 @@ public class DesktopSettingsProvider extends ContentProvider {
         getContext().enforceCallingOrSelfPermission(WRITE_SECURE_SETTINGS,
                 "Changing home screen preferences requires system Settings access");
         final boolean reset = "reset_animation_preferences".equals(method);
-        if (!"get_preferences".equals(method) && !"set_preference".equals(method) && !reset) {
+        final boolean writeIcons = "set_icon_preferences".equals(method);
+        if (!"get_preferences".equals(method) && !"set_preference".equals(method)
+                && !writeIcons && !reset) {
             throw new IllegalArgumentException("Unknown desktop settings method");
         }
         final boolean write = "set_preference".equals(method);
@@ -77,11 +83,15 @@ public class DesktopSettingsProvider extends ContentProvider {
                 && value instanceof Boolean;
         final boolean validNumber = parameter != null && value instanceof Integer
                 && (int) value >= parameter.min() && (int) value <= parameter.max();
-        final boolean validShape = ICON_SHAPE.equals(key) && value instanceof String
-                && ("".equals(value) || Arrays.stream(ShapesProvider.INSTANCE.getIconShapes())
-                        .anyMatch(shape -> shape.getKey().equals(value)));
-        if (write && !validBoolean && !validNumber && !validShape) {
+        final boolean validShape = ICON_SHAPE.equals(key) && isValidShape(value);
+        final boolean validSize = ICON_SIZE.equals(key) && isValidSize(value);
+        if (write && !validBoolean && !validNumber && !validShape && !validSize) {
             throw new IllegalArgumentException("Unknown preference or invalid value");
+        }
+        if (writeIcons && (extras == null || !isValidSize(extras.get(ICON_SIZE))
+                || !isValidShape(extras.get(ICON_SHAPE))
+                || !(extras.get(ICON_LABELS) instanceof Boolean))) {
+            throw new IllegalArgumentException("Invalid icon preferences");
         }
         final long identity = Binder.clearCallingIdentity();
         try {
@@ -89,14 +99,18 @@ public class DesktopSettingsProvider extends ContentProvider {
                     LauncherFiles.SHARED_PREFERENCES_KEY, Context.MODE_PRIVATE);
             // Commit on the Binder thread, never on the launcher UI thread. The normal
             // SharedPreferences listeners still update rotation, labels, themes and gestures.
-            if (write || reset) {
+            if (write || writeIcons || reset) {
                 SharedPreferences.Editor editor = preferences.edit();
-                if (reset) {
+                if (writeIcons) {
+                    editor.putInt(ICON_SIZE, extras.getInt(ICON_SIZE));
+                    editor.putString(ICON_SHAPE, extras.getString(ICON_SHAPE));
+                    editor.putBoolean(ICON_LABELS, extras.getBoolean(ICON_LABELS));
+                } else if (reset) {
                     for (DesktopAnimationSettings.Parameter item
                             : DesktopAnimationSettings.PARAMETERS) {
                         editor.remove(item.key());
                     }
-                } else if (validNumber) {
+                } else if (validNumber || validSize) {
                     editor.putInt(key, (int) value);
                 } else if (validShape) {
                     editor.putString(key, (String) value);
@@ -118,6 +132,16 @@ public class DesktopSettingsProvider extends ContentProvider {
         }
     }
 
+    private static boolean isValidSize(Object value) {
+        return value instanceof Integer && (int) value >= 80 && (int) value <= 120;
+    }
+
+    private static boolean isValidShape(Object value) {
+        return value instanceof String && ("".equals(value)
+                || Arrays.stream(ShapesProvider.INSTANCE.getIconShapes())
+                        .anyMatch(shape -> shape.getKey().equals(value)));
+    }
+
     private Bundle readPreferences(SharedPreferences preferences) {
         final Context context = getContext();
         final DisplayController.Info info = DisplayController.INSTANCE.get(context).getInfo();
@@ -134,17 +158,35 @@ public class DesktopSettingsProvider extends ContentProvider {
         final IconShapeModel[] shapes = ShapesProvider.INSTANCE.getIconShapes();
         final String[] shapeKeys = new String[shapes.length + 1];
         final String[] shapeLabels = new String[shapes.length + 1];
+        final String[] shapePaths = new String[shapes.length + 1];
         shapeKeys[0] = "";
         shapeLabels[0] = context.getString(R.string.arkui_icon_shape_system);
+        final int maskId = context.getResources().getIdentifier(
+                "config_icon_mask", "string", "android");
+        shapePaths[0] = maskId == 0 ? "M50 0A50 50 0 1 1 50 100A50 50 0 1 1 50 0"
+                : context.getResources().getString(maskId);
         for (int i = 0; i < shapes.length; i++) {
             shapeKeys[i + 1] = shapes[i].getKey();
             shapeLabels[i + 1] = context.getString(shapes[i].getTitleId());
+            shapePaths[i + 1] = shapes[i].getPathString();
         }
         values.putString(ICON_SHAPE, ThemeManager.PREF_ICON_SHAPE.get(context));
         available.putBoolean(ICON_SHAPE, shapes.length > 1);
         final Bundle iconShapes = new Bundle();
         iconShapes.putStringArray("values", shapeKeys);
         iconShapes.putStringArray("labels", shapeLabels);
+        iconShapes.putStringArray("paths", shapePaths);
+        iconShapes.putString("default", shapes.length == 0 ? "" : ShapesProvider.CIRCLE_KEY);
+        final int iconSize = Math.max(80, Math.min(120, preferences.getInt(ICON_SIZE, 115)));
+        values.putInt(ICON_SIZE, iconSize);
+        available.putBoolean(ICON_SIZE, true);
+        final Bundle sizeSpec = new Bundle();
+        sizeSpec.putInt("min", 80);
+        sizeSpec.putInt("max", 120);
+        sizeSpec.putInt("step", 5);
+        sizeSpec.putInt("default", 115);
+        final InvariantDeviceProfile idp = InvariantDeviceProfile.INSTANCE.get(context);
+        sizeSpec.putFloat("base_size_dp", idp.iconSize[0] / idp.desktopIconScale);
         available.putBoolean("pref_allowRotation", !info.isTablet(info.realBounds)
                 && (!Flags.oneGridSpecs() || info.isRotationAllowed()));
         final LauncherApps apps = context.getSystemService(LauncherApps.class);
@@ -161,6 +203,7 @@ public class DesktopSettingsProvider extends ContentProvider {
         result.putBundle("values", values);
         result.putBundle("available", available);
         result.putBundle("icon_shapes", iconShapes);
+        result.putBundle("icon_size", sizeSpec);
         result.putBundle("motion", DesktopAnimationSettings.describe(preferences));
         return result;
     }
