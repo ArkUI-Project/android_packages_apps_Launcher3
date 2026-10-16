@@ -48,7 +48,6 @@ import com.android.launcher3.model.data.ItemInfo;
 import com.android.launcher3.popup.Poppable;
 import com.android.launcher3.popup.PoppableType;
 import com.android.launcher3.popup.PopupController;
-import com.android.launcher3.util.Themes;
 import com.android.launcher3.views.ActivityContext;
 import com.android.launcher3.views.BaseDragLayer;
 import com.android.launcher3.views.BaseDragLayer.TouchCompleteListener;
@@ -104,10 +103,6 @@ public class LauncherAppWidgetHostView extends BaseLauncherAppWidgetHostView
             setDefaultFocusHighlightEnabled(false);
             mFocusRectOutsets = context.getResources().getDimensionPixelSize(
                     R.dimen.focus_rect_widget_outsets);
-        }
-
-        if (Themes.getAttrBoolean(context, R.attr.isWorkspaceDarkText)) {
-            setOnLightBackground(true);
         }
     }
 

@@ -76,6 +76,12 @@ public abstract class BaseLauncherAppWidgetHostView extends NavigableAppWidgetHo
     }
 
     @Override
+    public void updateAppWidget(RemoteViews remoteViews) {
+        mFrostedBackground.prepareForUpdate();
+        super.updateAppWidget(remoteViews);
+    }
+
+    @Override
     protected View getErrorView() {
         return mInflater.inflate(R.layout.appwidget_error, this, false);
     }

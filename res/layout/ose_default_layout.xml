@@ -22,7 +22,7 @@
         android:paddingStart="16dp"
         android:paddingEnd="16dp"
         android:text="@string/abandoned_search"
-        android:textColor="?android:attr/textColorSecondary"
+        android:textColor="@color/arkui_widget_foreground"
         android:textAppearance="?android:textAppearanceMedium"
         android:clickable="true"
         android:background="?android:attr/selectableItemBackground" />

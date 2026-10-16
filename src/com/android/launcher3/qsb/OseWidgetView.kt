@@ -37,7 +37,6 @@ import com.android.launcher3.model.data.ItemInfo
 import com.android.launcher3.model.data.LauncherAppWidgetInfo
 import com.android.launcher3.util.Executors.MAIN_EXECUTOR
 import com.android.launcher3.util.RunnableList
-import com.android.launcher3.util.Themes
 import com.android.launcher3.views.ActivityContext
 import com.android.launcher3.views.OptionsPopupView
 import com.android.launcher3.views.OptionsPopupView.OptionItem
@@ -107,9 +106,9 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
     override fun getErrorView(): View =
         View.inflate(context, R.layout.ose_default_layout, null).apply {
             foreground = background
-            background = FrostedSurfaceDrawable(
+            background = FrostedSurfaceDrawable.forSystemTheme(
                 this,
-                Themes.getAttrColor(context, R.attr.folderBackgroundColor),
+                context,
                 28 * resources.displayMetrics.density,
             )
             clipToOutline = true

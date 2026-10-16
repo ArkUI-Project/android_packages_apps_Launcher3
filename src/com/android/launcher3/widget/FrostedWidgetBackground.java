@@ -18,17 +18,16 @@ package com.android.launcher3.widget;
 
 import android.appwidget.AppWidgetHostView;
 import android.content.res.ColorStateList;
+import android.content.res.Configuration;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.view.View;
 import android.view.ViewTreeObserver;
 
-import com.android.launcher3.R;
 import com.android.launcher3.graphics.FrostedSurfaceDrawable;
-import com.android.launcher3.util.Themes;
 
-/** Decorates a widget's surface while leaving provider text, imagery and actions intact. */
+/** Applies the host's system surface color without changing provider imagery or actions. */
 public final class FrostedWidgetBackground implements View.OnAttachStateChangeListener {
     private final AppWidgetHostView mHost;
     private View mView;
@@ -46,6 +45,13 @@ public final class FrostedWidgetBackground implements View.OnAttachStateChangeLi
         mHost = host;
         host.addOnAttachStateChangeListener(this);
         if (host.isAttachedToWindow()) onViewAttachedToWindow(host);
+    }
+
+    /** Select a provider's dark-text layout, when supplied, before RemoteViews are inflated. */
+    public void prepareForUpdate() {
+        boolean dark = (mHost.getResources().getConfiguration().uiMode
+                & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;
+        mHost.setOnLightBackground(!dark);
     }
 
     @Override
@@ -73,7 +79,7 @@ public final class FrostedWidgetBackground implements View.OnAttachStateChangeLi
             ColorStateList tint = mView.getBackgroundTintList();
             if (tint != null) {
                 mOriginalTint = tint;
-                mSurface.setColor(resolveColor(mView, mOriginal, tint));
+                // Preserve the provider tint for restoration without tinting the themed surface.
                 mView.setBackgroundTintList(null);
             }
             return;
@@ -89,8 +95,7 @@ public final class FrostedWidgetBackground implements View.OnAttachStateChangeLi
         if (mOriginal instanceof GradientDrawable) {
             radius = Math.max(radius, ((GradientDrawable) mOriginal).getCornerRadius());
         }
-        mSurface = new FrostedSurfaceDrawable(body,
-                resolveColor(body, mOriginal, mOriginalTint), radius);
+        mSurface = FrostedSurfaceDrawable.forSystemTheme(body, mHost.getContext(), radius);
         if (mOriginal instanceof GradientDrawable
                 && ((GradientDrawable) mOriginal).getShape() == GradientDrawable.OVAL) {
             mSurface.setShape(GradientDrawable.OVAL);
@@ -107,6 +112,8 @@ public final class FrostedWidgetBackground implements View.OnAttachStateChangeLi
     }
 
     private static boolean canDecorate(Drawable drawable) {
+        // Native search surfaces already own a themed backdrop and its attachment lifecycle.
+        if (drawable instanceof FrostedSurfaceDrawable) return false;
         if (drawable == null || drawable instanceof ColorDrawable) return true;
         if (drawable instanceof GradientDrawable) {
             GradientDrawable shape = (GradientDrawable) drawable;
@@ -115,24 +122,6 @@ public final class FrostedWidgetBackground implements View.OnAttachStateChangeLi
         }
         // Artwork, masks and provider-specific ripple/button backgrounds retain their shape.
         return false;
-    }
-
-    private int resolveColor(View view, Drawable original, ColorStateList tint) {
-        int color = 0;
-        if (tint != null) {
-            color = tint.getColorForState(view.getDrawableState(), tint.getDefaultColor());
-        } else if (original instanceof ColorDrawable) {
-            color = ((ColorDrawable) original).getColor();
-        } else if (original instanceof GradientDrawable) {
-            ColorStateList fill = ((GradientDrawable) original).getColor();
-            if (fill != null) color = fill.getDefaultColor();
-        }
-        if ((color >>> 24) == 0) {
-            boolean darkText = Themes.getAttrBoolean(mHost.getContext(), R.attr.isWorkspaceDarkText);
-            color = mHost.getContext().getColor(darkText ? android.R.color.system_neutral1_50
-                    : android.R.color.system_neutral1_900);
-        }
-        return color;
     }
 
     public void clear() {

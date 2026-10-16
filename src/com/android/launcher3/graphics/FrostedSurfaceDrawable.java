@@ -16,13 +16,17 @@
 
 package com.android.launcher3.graphics;
 
+import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Rect;
 import android.graphics.drawable.GradientDrawable;
 import android.view.View;
+import android.view.ViewTreeObserver;
 
 import androidx.core.graphics.ColorUtils;
+
+import com.android.launcher3.R;
 
 /** A tonal Material surface with a live, independently rendered blurred backdrop. */
 public class FrostedSurfaceDrawable extends GradientDrawable
@@ -44,6 +48,12 @@ public class FrostedSurfaceDrawable extends GradientDrawable
 
     private final View mOwner;
     private final float mDensity;
+    private Context mThemeContext;
+    private ViewTreeObserver mThemeObserver;
+    private final ViewTreeObserver.OnPreDrawListener mThemeListener = () -> {
+        refreshThemeColor();
+        return true;
+    };
     private Backdrop mBackdrop;
     private int mSurfaceColor;
     private boolean mBlurred;
@@ -61,6 +71,30 @@ public class FrostedSurfaceDrawable extends GradientDrawable
         setColor(surfaceColor);
         owner.addOnAttachStateChangeListener(this);
         if (owner.isAttachedToWindow()) attachBackdrop();
+    }
+
+    /** Uses the host's system theme even when the owner belongs to a RemoteViews provider. */
+    public static FrostedSurfaceDrawable forSystemTheme(
+            View owner, Context themeContext, float radius) {
+        FrostedSurfaceDrawable surface = new FrostedSurfaceDrawable(owner,
+                themeContext.getColor(R.color.arkui_widget_surface), radius);
+        surface.mThemeContext = themeContext;
+        if (owner.isAttachedToWindow()) surface.attachThemeObserver();
+        return surface;
+    }
+
+    private void refreshThemeColor() {
+        if (mThemeContext == null) return;
+        int color = mThemeContext.getColor(R.color.arkui_widget_surface);
+        if (color != mSurfaceColor) setColor(color);
+    }
+
+    private void attachThemeObserver() {
+        if (mDisposed || mThemeContext == null || mThemeObserver != null) return;
+        refreshThemeColor();
+        // A retained RemoteViews background may have a cached RenderNode after theme changes.
+        mThemeObserver = mOwner.getViewTreeObserver();
+        mThemeObserver.addOnPreDrawListener(mThemeListener);
     }
 
     @Override
@@ -104,6 +138,8 @@ public class FrostedSurfaceDrawable extends GradientDrawable
 
     @Override
     public void draw(Canvas canvas) {
+        // Detached widget previews do not have a pre-draw observer.
+        if (mThemeObserver == null) refreshThemeColor();
         if (!isVisible() || getAlpha() == 0) {
             if (mBackdrop != null) mBackdrop.hide();
             return;
@@ -144,11 +180,16 @@ public class FrostedSurfaceDrawable extends GradientDrawable
 
     @Override
     public void onViewAttachedToWindow(View view) {
+        attachThemeObserver();
         attachBackdrop();
     }
 
     @Override
     public void onViewDetachedFromWindow(View view) {
+        if (mThemeObserver != null && mThemeObserver.isAlive()) {
+            mThemeObserver.removeOnPreDrawListener(mThemeListener);
+        }
+        mThemeObserver = null;
         if (mBackdrop != null) {
             mBackdrop.close();
             mBackdrop = null;

@@ -28,9 +28,7 @@ public final class FrostedSearchView extends LinearLayout {
 
     public FrostedSearchView(Context context, AttributeSet attrs) {
         super(context, attrs);
-        mSurface = new FrostedSurfaceDrawable(this,
-                com.android.launcher3.util.Themes.getAttrColor(context,
-                        com.android.launcher3.R.attr.folderBackgroundColor),
+        mSurface = FrostedSurfaceDrawable.forSystemTheme(this, context,
                 28 * getResources().getDisplayMetrics().density);
         setBackground(mSurface);
         setClipToOutline(true);

@@ -47,6 +47,7 @@ public class QsbWidgetHostView extends NavigableAppWidgetHostView {
 
     @Override
     public void updateAppWidget(RemoteViews remoteViews) {
+        mFrostedBackground.prepareForUpdate();
         // Store the orientation in which the widget was inflated
         mPreviousOrientation = getResources().getConfiguration().orientation;
         super.updateAppWidget(remoteViews);
