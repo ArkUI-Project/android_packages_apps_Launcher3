@@ -229,6 +229,8 @@ public class Folder extends AbstractFloatingView implements ClipPathView, DragSo
     private final RectF mExpansionSource = new RectF();
     private float mExpansionSourceRadius;
     private float mExpansionProgress;
+    private float mExpansionVelocity;
+    private long mExpansionTime;
     private int mExpandedHeaderTop;
     private int mExpandedContentLeft;
 
@@ -384,14 +386,31 @@ public class Folder extends AbstractFloatingView implements ClipPathView, DragSo
 
     float getExpansionProgress() { return mExpansionProgress; }
 
+    float getExpansionVelocity() {
+        return android.os.SystemClock.uptimeMillis() - mExpansionTime < 100
+                ? mExpansionVelocity : 0f;
+    }
+
     void prepareExpansion(RectF source, float radius) {
-        mExpansionSource.set(source);
-        mExpansionSourceRadius = radius;
+        updateExpansionSource(source, radius);
         ((Launcher) mActivityContext).beginFolderFocusBlur(this);
     }
 
+    void updateExpansionSource(RectF source, float radius) {
+        mExpansionSource.set(source);
+        mExpansionSourceRadius = radius;
+    }
+
     void setExpansionProgress(float progress) {
-        mExpansionProgress = Utilities.boundToRange(progress, 0, 1);
+        long now = android.os.SystemClock.uptimeMillis();
+        long elapsed = now - mExpansionTime;
+        float next = Utilities.boundToRange(progress, 0, 1);
+        if (elapsed > 0) {
+            mExpansionVelocity = elapsed < 100
+                    ? (next - mExpansionProgress) * 1000f / elapsed : 0f;
+        }
+        mExpansionTime = now;
+        mExpansionProgress = next;
         if (progress > 0 || !mIsOpen) {
             ((Launcher) mActivityContext).setFolderFocusBlur(this, mExpansionProgress);
         }
@@ -810,7 +829,9 @@ public class Folder extends AbstractFloatingView implements ClipPathView, DragSo
         Folder openFolder = getOpen(mActivityContext);
         closeOpenFolder(openFolder);
 
-        mContent.bindItems(items);
+        boolean continuing = canContinueOpening(items, pageNo);
+        cancelRunningAnimations();
+        if (!continuing) mContent.bindItems(items);
         mContent.setCanAnnouncePageDescriptionForFolder(true);
         centerAboutIcon();
         mItemsInvalidated = true;
@@ -845,7 +866,6 @@ public class Folder extends AbstractFloatingView implements ClipPathView, DragSo
         // dropping. One resulting issue is that replaceFolderWithFinalItem() can be called twice.
         mDeleteFolderOnDropCompleted = false;
 
-        cancelRunningAnimations();
         Log.d("b/383526431", "animateOpen: content child count after cancelling"
                 + " animation: " + mContent.getTotalChildCount());
 
@@ -919,8 +939,10 @@ public class Folder extends AbstractFloatingView implements ClipPathView, DragSo
         // Because t=0 has the folder match the folder icon, we can skip the
         // first frame and have the same movement one frame earlier.
         Log.d("b/311077782", "Folder.animateOpen");
-        animatorSet.setCurrentPlayTime(Math.min(
-                getSingleFrameMs(getContext()), animatorSet.getTotalDuration()));
+        if (!continuing) {
+            animatorSet.setCurrentPlayTime(Math.min(
+                    getSingleFrameMs(getContext()), animatorSet.getTotalDuration()));
+        }
         animatorSet.start();
 
 
@@ -929,6 +951,17 @@ public class Folder extends AbstractFloatingView implements ClipPathView, DragSo
             mActivityContext.getDragController().forceTouchMove();
         }
         mContent.verifyVisibleHighResIcons(mContent.getNextPage());
+    }
+
+    private boolean canContinueOpening(List<ItemInfo> items, int pageNo) {
+        if (!usesFullScreenPresentation() || mCurrentAnimator == null
+                || !mContent.areViewsBound() || mContent.getCurrentPage() != pageNo) return false;
+        List<View> views = getIconsInReadingOrder();
+        if (views.size() != items.size()) return false;
+        for (int i = 0; i < views.size(); i++) {
+            if (views.get(i).getTag() != items.get(i)) return false;
+        }
+        return true;
     }
 
     /**
@@ -1991,6 +2024,7 @@ public class Folder extends AbstractFloatingView implements ClipPathView, DragSo
 
     @Override
     public boolean onControllerInterceptTouchEvent(MotionEvent ev) {
+        if (!mIsOpen) return false;
         if (ev.getAction() == MotionEvent.ACTION_DOWN) {
             BaseDragLayer dl = (BaseDragLayer) getParent();
 
@@ -2010,6 +2044,18 @@ public class Folder extends AbstractFloatingView implements ClipPathView, DragSo
             }
         }
         return false;
+    }
+
+    @Override
+    public boolean dispatchTouchEvent(MotionEvent event) {
+        // A closing folder is a visual tail. Its full-screen content must not catch the
+        // next DOWN intended for a desktop icon or a horizontal workspace swipe.
+        return mIsOpen && super.dispatchTouchEvent(event);
+    }
+
+    @Override
+    public boolean isHandlingTouch() {
+        return mIsOpen;
     }
 
     @Override

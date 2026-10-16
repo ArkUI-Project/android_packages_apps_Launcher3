@@ -250,6 +250,7 @@ import com.android.quickstep.util.TransformParams;
 import com.android.quickstep.util.VibrationConstants;
 import com.android.quickstep.window.RecentsWindowManager;
 import com.android.systemui.plugins.ResourceProvider;
+import com.android.systemui.shared.animation.DampedSpringInterpolator;
 import com.android.systemui.shared.recents.model.Task;
 import com.android.systemui.shared.recents.model.Task.TaskKey;
 import com.android.systemui.shared.recents.model.ThumbnailData;
@@ -4758,6 +4759,20 @@ public abstract class RecentsView<
         debugLog(TAG, "snapToPage, whichPage: " + whichPage + ", delta: " + delta + ", duration: "
                 + duration + ", immediate: " + immediate);
         return super.snapToPage(whichPage, delta, duration, immediate);
+    }
+
+    @Override
+    protected Interpolator getPageSnapInterpolator(int delta, int duration, float velocity) {
+        if (showAsGrid() || duration <= 0 || delta == 0 || !ValueAnimator.areAnimatorsEnabled()) {
+            return super.getPageSnapInterpolator(delta, duration, velocity);
+        }
+        DampedSpringInterpolator spring = new DampedSpringInterpolator(velocity, delta, duration);
+        float start = getPagedOrientationHandler().getPrimaryScroll(this);
+        float first = (mMinScroll - start) / delta;
+        float last = (mMaxScroll - start) / delta;
+        // Interior pages may rebound, but the first/last task must not activate edge effects.
+        return fraction -> Utilities.boundToRange(spring.getInterpolation(fraction),
+                Math.min(first, last), Math.max(first, last));
     }
 
     private int getNextPageInternal(int delta, TaskGridNavHelper.TaskNavDirection direction,

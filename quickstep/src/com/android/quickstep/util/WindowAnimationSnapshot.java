@@ -19,6 +19,7 @@ import android.graphics.PixelFormat;
 import android.graphics.Rect;
 import android.graphics.RectF;
 import android.graphics.drawable.Drawable;
+import android.os.SystemClock;
 import android.view.SurfaceControl;
 import android.view.View;
 import android.window.ScreenCaptureInternal;
@@ -49,6 +50,8 @@ public final class WindowAnimationSnapshot extends Drawable
     private AppWindowAnimationState.Session mSession;
     private @Nullable Bitmap mBitmap;
     private @Nullable ValueAnimator mAnimator;
+    private long mContinuationTime;
+    private long mContinuationPlayTime;
     // Native capture keeps a weak reference to the consumer; retain it until the reply.
     private @Nullable ObjIntConsumer<ScreenCaptureInternal.ScreenshotHardwareBuffer> mCaptureReply;
     private @Nullable ScreenCaptureInternal.ScreenCaptureListener mCaptureListener;
@@ -77,7 +80,10 @@ public final class WindowAnimationSnapshot extends Drawable
         mCaptureReply = (buffer, status) -> MAIN_EXECUTOR.execute(() -> {
             mCaptureReply = null;
             mCaptureListener = null;
-            if (buffer == null) return;
+            if (buffer == null) {
+                close();
+                return;
+            }
             try {
                 if (!mClosed && status == 0 && !buffer.containsSecureLayers()) {
                     mBitmap = buffer.asBitmap();
@@ -85,6 +91,8 @@ public final class WindowAnimationSnapshot extends Drawable
             } finally {
                 if (buffer.getHardwareBuffer() != null) buffer.getHardwareBuffer().close();
             }
+            if (mBitmap == null) close();
+            else startContinuation();
         });
         mCaptureListener = new ScreenCaptureInternal.ScreenCaptureListener(mCaptureReply);
         float scale = Math.min(1f, (float) MAX_CAPTURE_EDGE
@@ -111,7 +119,7 @@ public final class WindowAnimationSnapshot extends Drawable
     }
 
     public void continueAnimation(@Nullable ValueAnimator tail, long playTime) {
-        if (mClosed || mBitmap == null || !mSession.isActive()
+        if (mClosed || !mSession.isActive()
                 || !mHost.isAttachedToWindow() || !mHost.isShown()
                 || mHost.getWidth() != mHostWidth || mHost.getHeight() != mHostHeight
                 || tail == null || playTime >= tail.getDuration()) {
@@ -125,6 +133,8 @@ public final class WindowAnimationSnapshot extends Drawable
         }
         mSession = continuation;
         mAnimator = tail;
+        mContinuationTime = SystemClock.uptimeMillis();
+        mContinuationPlayTime = playTime;
         while (sRunning.size() >= MAX_RUNNING) sRunning.get(0).close();
         sRunning.add(this);
         mHost.addOnAttachStateChangeListener(this);
@@ -140,8 +150,26 @@ public final class WindowAnimationSnapshot extends Drawable
                 close();
             }
         });
-        tail.setCurrentPlayTime(playTime);
-        tail.start();
+        // Capture may still be in flight when the next interaction cancels the live window.
+        // Own the tail immediately, then catch up its clock when the bitmap arrives.
+        startContinuation();
+    }
+
+    private void startContinuation() {
+        if (mClosed || mBitmap == null || mAnimator == null || mAnimator.isStarted()) return;
+        float durationScale = ValueAnimator.getDurationScale();
+        if (!mSession.isActive() || durationScale <= 0f) {
+            close();
+            return;
+        }
+        long playTime = mContinuationPlayTime + Math.round(
+                (SystemClock.uptimeMillis() - mContinuationTime) / durationScale);
+        if (playTime >= mAnimator.getDuration()) {
+            close();
+            return;
+        }
+        mAnimator.setCurrentPlayTime(playTime);
+        mAnimator.start();
     }
 
     /** The matrix and crop use the same app coordinates as the live surface transaction. */

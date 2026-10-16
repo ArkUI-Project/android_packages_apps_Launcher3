@@ -253,6 +253,7 @@ public class Workspace<T extends View & PageIndicator> extends PagedView<T>
     private SpringLoadedDragController mSpringLoadedDragController;
 
     private boolean mIsSwitchingState = false;
+    private Object mHomeAnimationOwner;
 
     boolean mChildrenLayersEnabled = true;
 
@@ -1202,8 +1203,18 @@ public class Workspace<T extends View & PageIndicator> extends PagedView<T>
      * has completed.
      */
     public boolean isFinishedSwitchingState() {
-        return !mIsSwitchingState
+        return (mHomeAnimationOwner != null && mLauncher.isInState(NORMAL))
+                || !mIsSwitchingState
                 || (mTransitionProgress > FINISHED_SWITCHING_STATE_TRANSITION_PROGRESS);
+    }
+
+    /** Allow input during a home reveal, without letting an old reveal release a new owner. */
+    public void setHomeAnimationRunning(Object owner, boolean running) {
+        if (running) {
+            mHomeAnimationOwner = owner;
+        } else if (mHomeAnimationOwner == owner) {
+            mHomeAnimationOwner = null;
+        }
     }
 
     @Override

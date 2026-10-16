@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2019 The Android Open Source Project
+ * Modified by the ArkUI Project in 2026 for non-interactive animation continuations.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,6 +30,7 @@ import com.android.launcher3.AbstractFloatingView;
 public class ListenerView extends AbstractFloatingView {
 
     private Runnable mCloseListener;
+    private boolean mCloseOnTouch = true;
 
     public ListenerView(Context context, AttributeSet attrs) {
         super(context, attrs);
@@ -37,6 +39,15 @@ public class ListenerView extends AbstractFloatingView {
 
     public void setListener(Runnable listener) {
         mCloseListener = listener;
+    }
+
+    public void setCloseOnTouch(boolean closeOnTouch) {
+        mCloseOnTouch = closeOnTouch;
+    }
+
+    @Override
+    public boolean isHandlingTouch() {
+        return mCloseOnTouch;
     }
 
     @Override
@@ -72,7 +83,7 @@ public class ListenerView extends AbstractFloatingView {
 
     @Override
     public boolean onControllerInterceptTouchEvent(MotionEvent ev) {
-        if (ev.getAction() == MotionEvent.ACTION_DOWN) {
+        if (mCloseOnTouch && ev.getActionMasked() == MotionEvent.ACTION_DOWN) {
             handleClose(false);
         }
         // We want other views to be able to intercept the touch so we return false here.

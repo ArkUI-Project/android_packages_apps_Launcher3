@@ -43,6 +43,7 @@ import android.util.Pair;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewTreeObserver.OnGlobalLayoutListener;
+import android.view.ViewTreeObserver.OnPreDrawListener;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 
@@ -76,7 +77,7 @@ import java.util.function.Supplier;
  * A view that is created to look like another view with the purpose of creating fluid animations.
  */
 public class FloatingIconView extends FrameLayout implements
-        Animator.AnimatorListener, OnGlobalLayoutListener, FloatingView {
+        Animator.AnimatorListener, OnGlobalLayoutListener, OnPreDrawListener, FloatingView {
 
     private static final String TAG = "FloatingIconView";
 
@@ -114,6 +115,7 @@ public class FloatingIconView extends FrameLayout implements
     private Runnable mOnTargetChangeRunnable;
 
     private final Rect mFinalDrawableBounds = new Rect();
+    private final Rect mTargetIconBounds = new Rect();
 
     private ListenerView mListenerView;
     private Runnable mFastFinishRunnable;
@@ -148,13 +150,13 @@ public class FloatingIconView extends FrameLayout implements
     protected void onAttachedToWindow() {
         super.onAttachedToWindow();
         if (!mIsOpening) {
-            getViewTreeObserver().addOnGlobalLayoutListener(this);
+            getViewTreeObserver().addOnPreDrawListener(this);
         }
     }
 
     @Override
     protected void onDetachedFromWindow() {
-        getViewTreeObserver().removeOnGlobalLayoutListener(this);
+        getViewTreeObserver().removeOnPreDrawListener(this);
         super.onDetachedFromWindow();
     }
 
@@ -576,12 +578,27 @@ public class FloatingIconView extends FrameLayout implements
     }
 
     @Override
+    public boolean onPreDraw() {
+        // Paging and workspace scale change without a layout pass. Follow the visible icon
+        // every frame so the returning app can settle while another gesture moves Home.
+        onGlobalLayout();
+        return true;
+    }
+
+    @Override
     public void onGlobalLayout() {
         if (mOriginalIcon != null && mOriginalIcon.isAttachedToWindow() && mPositionOut != null) {
-            getLocationBoundsForView(mLauncher, mOriginalIcon, mIsOpening, sTmpRectF);
+            getLocationBoundsForView(mLauncher, mOriginalIcon, mIsOpening, sTmpRectF,
+                    mTargetIconBounds);
             sTmpRectF.offset(0, mIconOffsetY);
             if (!sTmpRectF.equals(mPositionOut)) {
+                int oldLeft = getLeft();
+                int oldTop = getTop();
                 updatePosition(sTmpRectF, (InsettableFrameLayout.LayoutParams) getLayoutParams());
+                // Changing the landing bounds must not move the already displayed window.
+                // Its spring will integrate towards the new bounds on the next frame.
+                setTranslationX(getTranslationX() + oldLeft - getLeft());
+                setTranslationY(getTranslationY() + oldTop - getTop());
                 if (mOnTargetChangeRunnable != null) {
                     mOnTargetChangeRunnable.run();
                 }
@@ -696,6 +713,7 @@ public class FloatingIconView extends FrameLayout implements
         parent.addView(view);
         dragLayer.addView(view.mListenerView);
         view.mListenerView.setListener(view::fastFinish);
+        view.mListenerView.setCloseOnTouch(isOpening);
 
         view.mEndRunnable = () -> {
             view.mEndRunnable = null;
@@ -759,6 +777,7 @@ public class FloatingIconView extends FrameLayout implements
         mIsOpening = false;
         mPositionOut = null;
         mListenerView.setListener(null);
+        mListenerView.setCloseOnTouch(true);
         mOriginalIcon = null;
         mOnTargetChangeRunnable = null;
         mBadge = null;

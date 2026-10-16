@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2016 The Android Open Source Project
+ * Modified by the ArkUI Project in 2026 to separate visual and input ownership.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -190,6 +191,11 @@ public abstract class AbstractFloatingView extends LinearLayout implements Touch
         return mIsOpen;
     }
 
+    /** Visual continuations may stay open for cleanup without owning the next gesture. */
+    public boolean isHandlingTouch() {
+        return true;
+    }
+
     protected abstract boolean isOfType(@FloatingViewType int type);
 
     /** Return true if this view can consume back press. */
@@ -258,6 +264,12 @@ public abstract class AbstractFloatingView extends LinearLayout implements Touch
 
     private static <T extends AbstractFloatingView> T getView(
             ActivityContext activity, @FloatingViewType int type, boolean mustBeOpen) {
+        return getView(activity, type, mustBeOpen, false /* mustHandleTouch */);
+    }
+
+    private static <T extends AbstractFloatingView> T getView(
+            ActivityContext activity, @FloatingViewType int type, boolean mustBeOpen,
+            boolean mustHandleTouch) {
         BaseDragLayer dragLayer = activity.getDragLayer();
         if (dragLayer == null) return null;
         // Iterate in reverse order. AbstractFloatingView is added later to the dragLayer,
@@ -266,7 +278,8 @@ public abstract class AbstractFloatingView extends LinearLayout implements Touch
             View child = dragLayer.getChildAt(i);
             if (child instanceof AbstractFloatingView) {
                 AbstractFloatingView view = (AbstractFloatingView) child;
-                if (view.isOfType(type) && (!mustBeOpen || view.isOpen())) {
+                if (view.isOfType(type) && (!mustBeOpen || view.isOpen())
+                        && (!mustHandleTouch || view.isHandlingTouch())) {
                     return (T) view;
                 }
             }
@@ -313,7 +326,9 @@ public abstract class AbstractFloatingView extends LinearLayout implements Touch
 
     public static AbstractFloatingView getTopOpenViewWithType(ActivityContext activity,
             @FloatingViewType int type) {
-        return getOpenView(activity, type);
+        // Input gates must ignore animation tails; getOpenView/closeOpenViews still find
+        // them so state changes and activity destruction can release their resources.
+        return getView(activity, type, true /* mustBeOpen */, true /* mustHandleTouch */);
     }
 
     public boolean canInterceptEventsInSystemGestureRegion() {

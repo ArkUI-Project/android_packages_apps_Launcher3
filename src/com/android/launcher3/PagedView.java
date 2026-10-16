@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2012 The Android Open Source Project
+ * Modified by the ArkUI Project in 2026 for velocity-preserving page settling.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -47,6 +48,7 @@ import android.view.ViewGroup;
 import android.view.ViewParent;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
+import android.view.animation.Interpolator;
 import android.widget.OverScroller;
 import android.widget.ScrollView;
 
@@ -109,6 +111,8 @@ public abstract class PagedView<T extends View & PageIndicator> extends ViewGrou
     protected int mMaxScroll;
     protected int mMinScroll;
     protected OverScroller mScroller;
+    private Interpolator mPageSnapInterpolator = SCROLL;
+    private float mPageSnapVelocity = Float.NaN;
     private VelocityTracker mVelocityTracker;
     protected int mPageSpacing = 0;
 
@@ -178,7 +182,8 @@ public abstract class PagedView<T extends View & PageIndicator> extends ViewGrou
         setHapticFeedbackEnabled(false);
         mIsRtl = Utilities.isRtl(getResources());
 
-        mScroller = new OverScroller(context, SCROLL);
+        mScroller = new OverScroller(context,
+                fraction -> mPageSnapInterpolator.getInterpolation(fraction));
         mCurrentPage = 0;
         mCurrentScrollOverPage = 0;
 
@@ -602,7 +607,8 @@ public abstract class PagedView<T extends View & PageIndicator> extends ViewGrou
             // finish the scroller to skip waiting for additional settling
             int finalPos = mOrientationHandler.getPrimaryValue(mScroller.getFinalX(),
                     mScroller.getFinalY());
-            if (newPos == finalPos && mEdgeGlowLeft.isFinished() && mEdgeGlowRight.isFinished()) {
+            if (mPageSnapInterpolator == SCROLL && newPos == finalPos
+                    && mEdgeGlowLeft.isFinished() && mEdgeGlowRight.isFinished()) {
                 abortScrollerAnimation(false);
             }
 
@@ -1702,6 +1708,17 @@ public abstract class PagedView<T extends View & PageIndicator> extends ViewGrou
     }
 
     protected boolean snapToPageWithVelocity(int whichPage, int velocity) {
+        // Finger velocity and scroll velocity have opposite signs. Keep the signed value
+        // before duration calculation below converts it to a magnitude.
+        mPageSnapVelocity = -velocity;
+        try {
+            return snapToPageWithVelocityInternal(whichPage, velocity);
+        } finally {
+            mPageSnapVelocity = Float.NaN;
+        }
+    }
+
+    private boolean snapToPageWithVelocityInternal(int whichPage, int velocity) {
         whichPage = validateNewPage(whichPage);
         int halfScreenSize = mOrientationHandler.getMeasuredSize(this) / 2;
 
@@ -1736,6 +1753,10 @@ public abstract class PagedView<T extends View & PageIndicator> extends ViewGrou
 
     protected int getSnapAnimationDuration() {
         return mPageSnapAnimationDuration;
+    }
+
+    protected Interpolator getPageSnapInterpolator(int delta, int duration, float velocity) {
+        return SCROLL;
     }
 
     public boolean snapToPage(int whichPage) {
@@ -1788,10 +1809,14 @@ public abstract class PagedView<T extends View & PageIndicator> extends ViewGrou
             pageBeginTransition();
         }
 
+        float velocity = Float.isFinite(mPageSnapVelocity) ? mPageSnapVelocity
+                : mScroller.isFinished() ? 0f : Math.copySign(mScroller.getCurrVelocity(),
+                        mScroller.getFinalX() - mScroller.getCurrX());
         if (!mScroller.isFinished()) {
             abortScrollerAnimation(false);
         }
 
+        mPageSnapInterpolator = getPageSnapInterpolator(delta, duration, velocity);
         mScroller.startScroll(mOrientationHandler.getPrimaryScroll(this), 0, delta, 0, duration);
         updatePageIndicator();
 

@@ -2,6 +2,7 @@
 package com.android.launcher3.folder;
 
 import static com.android.app.animation.Interpolators.EMPHASIZED;
+import static com.android.app.animation.Interpolators.LINEAR;
 
 import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
@@ -15,6 +16,8 @@ import android.view.ViewGroup;
 
 import com.android.launcher3.BubbleTextView;
 import com.android.launcher3.CellLayout;
+import com.android.launcher3.Utilities;
+import com.android.launcher3.anim.SpringAnimationBuilder;
 import com.android.launcher3.apppairs.AppPairIcon;
 import com.android.launcher3.model.data.ItemInfo;
 import com.android.launcher3.views.BaseDragLayer;
@@ -57,15 +60,19 @@ final class FullScreenFolderAnimationManager implements FolderAnimationCreator {
                 source.top + preview.bottom * sourceScale);
         mFolder.prepareExpansion(surface, icon.getPreviewCornerRadius() * sourceScale);
         float progress = mFolder.getExpansionProgress();
-        long duration = Math.max(120, Math.round((opening ? 360 : 260)
-                * (opening ? 1 - progress : progress)));
+        float distance = (opening ? 1f : 0f) - progress;
+        SpringAnimationBuilder spring = new SpringAnimationBuilder(icon.getContext())
+                .setValues(0f, 1f).setStiffness(opening ? 520f : 650f).setDampingRatio(.82f)
+                .setMinimumVisibleChange(.001f)
+                .setStartVelocity(Math.abs(distance) < .001f ? 0f
+                        : mFolder.getExpansionVelocity() / distance).computeParams();
+        long duration = Math.max(120L, spring.getDuration());
         AnimatorSet set = new AnimatorSet();
-        set.setInterpolator(EMPHASIZED);
-        ValueAnimator focus = ValueAnimator.ofFloat(progress, opening ? 1 : 0);
+        ValueAnimator focus = ValueAnimator.ofFloat(0f, 1f);
         focus.setDuration(duration);
-        focus.addUpdateListener(animation -> mFolder.setExpansionProgress(
-                (float) animation.getAnimatedValue()));
+        focus.setInterpolator(LINEAR);
         set.play(focus);
+        List<ItemMotion> motions = new ArrayList<>();
 
         for (int i = 0; i < items.size(); i++) {
             View view = items.get(i);
@@ -94,22 +101,37 @@ final class FullScreenFolderAnimationManager implements FolderAnimationCreator {
             view.setPivotX(iconBounds.exactCenterX());
             view.setPivotY(iconBounds.exactCenterY());
             float[] previous = current.get(i);
-            view.setTranslationX(opening ? dx * (1 - progress) : previous[0]);
-            view.setTranslationY(opening ? dy * (1 - progress) : previous[1]);
-            view.setScaleX(opening ? scale + (1 - scale) * progress : previous[2]);
-            view.setScaleY(opening ? scale + (1 - scale) * progress : previous[3]);
-            view.setAlpha(opening ? (inPreview ? 1 : progress) : previous[4]);
-            play(set, view, View.TRANSLATION_X, opening ? 0 : dx, duration);
-            play(set, view, View.TRANSLATION_Y, opening ? 0 : dy, duration);
-            play(set, view, View.SCALE_X, opening ? 1 : scale, duration);
-            play(set, view, View.SCALE_Y, opening ? 1 : scale, duration);
-            if (!inPreview) play(set, view, View.ALPHA, opening ? 1 : 0, duration);
+            boolean fromPreview = opening && progress == 0;
+            view.setTranslationX(fromPreview ? dx : previous[0]);
+            view.setTranslationY(fromPreview ? dy : previous[1]);
+            view.setScaleX(fromPreview ? scale : previous[2]);
+            view.setScaleY(fromPreview ? scale : previous[3]);
+            view.setAlpha(fromPreview ? (inPreview ? 1 : 0) : previous[4]);
+            motions.add(new ItemMotion(view, destination, iconBounds, start, inPreview));
             if (opening && progress == 0) label.setTextVisibility(false);
             Animator text = label.createTextAlphaAnimator(opening);
             text.setDuration(Math.min(duration, opening ? 180 : 120));
             text.setStartDelay(opening && progress == 0 ? 70 : 0);
+            text.setInterpolator(EMPHASIZED);
             set.play(text);
         }
+
+        focus.addUpdateListener(animation -> {
+            float fraction = animation.getAnimatedFraction();
+            float travel = fraction >= 1f ? 1f : spring.getInterpolatedValue(fraction);
+            float sourceScaleNow = dragLayer.getDescendantRectRelativeToSelf(icon, source);
+            surface.set(source.left + preview.left * sourceScaleNow,
+                    source.top + preview.top * sourceScaleNow,
+                    source.left + preview.right * sourceScaleNow,
+                    source.top + preview.bottom * sourceScaleNow);
+            mFolder.updateExpansionSource(surface, icon.getPreviewCornerRadius() * sourceScaleNow);
+            mFolder.setExpansionProgress(progress + distance * travel);
+            // All icons sample the same spring and the same current desktop frame. The target
+            // can keep moving during a page swipe without restarting any of these animations.
+            for (ItemMotion item : motions) {
+                item.update(travel, source, sourceScaleNow, opening);
+            }
+        });
 
         if (opening && progress == 0) {
             mFolder.mFooter.setAlpha(0);
@@ -165,6 +187,45 @@ final class FullScreenFolderAnimationManager implements FolderAnimationCreator {
             android.util.Property<View, Float> property, float target, long duration) {
         ObjectAnimator animator = ObjectAnimator.ofFloat(view, property, target);
         animator.setDuration(duration);
+        animator.setInterpolator(EMPHASIZED);
         set.play(animator);
+    }
+
+    private static final class ItemMotion {
+        private final View mView;
+        private final Rect mDestination;
+        private final Rect mIconBounds;
+        private final RectF mPreview;
+        private final boolean mInPreview;
+        private final float mX, mY, mScaleX, mScaleY, mAlpha;
+
+        ItemMotion(View view, Rect destination, Rect iconBounds, RectF preview,
+                boolean inPreview) {
+            mView = view;
+            mDestination = destination;
+            mIconBounds = iconBounds;
+            mPreview = preview;
+            mInPreview = inPreview;
+            mX = view.getTranslationX();
+            mY = view.getTranslationY();
+            mScaleX = view.getScaleX();
+            mScaleY = view.getScaleY();
+            mAlpha = view.getAlpha();
+        }
+
+        void update(float progress, Rect source, float sourceScale, boolean opening) {
+            float x = opening ? 0f : source.left + mPreview.centerX() * sourceScale
+                    - mDestination.left - mIconBounds.exactCenterX();
+            float y = opening ? 0f : source.top + mPreview.centerY() * sourceScale
+                    - mDestination.top - mIconBounds.exactCenterY();
+            float scale = opening ? 1f
+                    : mPreview.width() * sourceScale / Math.max(1, mIconBounds.width());
+            mView.setTranslationX(Utilities.mapRange(progress, mX, x));
+            mView.setTranslationY(Utilities.mapRange(progress, mY, y));
+            mView.setScaleX(Math.max(.01f, Utilities.mapRange(progress, mScaleX, scale)));
+            mView.setScaleY(Math.max(.01f, Utilities.mapRange(progress, mScaleY, scale)));
+            float alpha = opening || mInPreview ? 1f : 0f;
+            mView.setAlpha(Utilities.boundToRange(Utilities.mapRange(progress, mAlpha, alpha), 0f, 1f));
+        }
     }
 }

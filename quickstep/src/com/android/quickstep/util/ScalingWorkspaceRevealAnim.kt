@@ -253,9 +253,14 @@ class ScalingWorkspaceRevealAnim(
         hotseat.setLayerType(View.LAYER_TYPE_HARDWARE, null)
         animation.addListener(
             object : AnimatorListenerAdapter() {
+                override fun onAnimationStart(animation: Animator) {
+                    workspace.setHomeAnimationRunning(this@ScalingWorkspaceRevealAnim, true)
+                }
+
                 override fun onAnimationCancel(animation: Animator) {
                     super.onAnimationCancel(animation)
                     cancelled = true
+                    workspace.setHomeAnimationRunning(this@ScalingWorkspaceRevealAnim, false)
                     Log.d(TAG, "onAnimationCancel")
                 }
 
@@ -269,6 +274,7 @@ class ScalingWorkspaceRevealAnim(
         animation.addListener(
             AnimatorListeners.forEndCallback(
                 Runnable {
+                    workspace.setHomeAnimationRunning(this@ScalingWorkspaceRevealAnim, false)
                     Log.d(TAG, "onAnimationEnd, workspace and hotseat are visible")
                     val tagId = com.android.app.animation.R.id.ongoing_animation
                     val finishedAnimation = getAnimators()
