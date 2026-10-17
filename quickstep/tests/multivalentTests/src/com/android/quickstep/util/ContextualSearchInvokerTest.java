@@ -20,6 +20,7 @@ import static android.app.contextualsearch.ContextualSearchManager.FEATURE_CONTE
 
 import static androidx.test.core.app.ApplicationProvider.getApplicationContext;
 
+import static com.android.internal.app.AssistUtils.INVOCATION_TYPE_HOME_BUTTON_LONG_PRESS;
 import static com.android.launcher3.logging.StatsLogManager.LauncherEvent.LAUNCHER_LAUNCH_ASSISTANT_FAILED_SERVICE_ERROR;
 import static com.android.launcher3.logging.StatsLogManager.LauncherEvent.LAUNCHER_LAUNCH_OMNI_ATTEMPTED_OVER_KEYGUARD;
 import static com.android.launcher3.logging.StatsLogManager.LauncherEvent.LAUNCHER_LAUNCH_OMNI_ATTEMPTED_OVER_NOTIFICATION_SHADE;
@@ -29,6 +30,7 @@ import static com.android.launcher3.logging.StatsLogManager.LauncherEvent.LAUNCH
 import static com.android.quickstep.util.ContextualSearchInvoker.KEYGUARD_SHOWING_SYSUI_FLAGS;
 import static com.android.quickstep.util.ContextualSearchInvoker.SHADE_EXPANDED_SYSUI_FLAGS;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -93,6 +95,7 @@ public class ContextualSearchInvokerTest {
     @Before
     public void setUp() {
         when(mMockPackageManager.hasSystemFeature(FEATURE_CONTEXTUAL_SEARCH)).thenReturn(true);
+        when(mMockStateManager.isContextualSearchProviderConfigured()).thenReturn(true);
         Context context = spy(getApplicationContext());
         doReturn(mMockPackageManager).when(context).getPackageManager();
         when(mMockSystemUiProxy.getLastSystemUiStateFlags()).thenReturn(0L);
@@ -109,6 +112,17 @@ public class ContextualSearchInvokerTest {
         ));
         doReturn(mMockContainerInterface).when(mContextualSearchInvoker)
                 .getRecentsContainerInterface();
+    }
+
+    @Test
+    public void noConfiguredProvider_doesNotOverrideNativeAssistant() {
+        when(mMockStateManager.isContextualSearchProviderConfigured()).thenReturn(false);
+
+        assertEquals(0, mContextualSearchInvoker.getSysUiAssistOverrideInvocationTypes().length);
+        assertFalse(mContextualSearchInvoker.tryStartAssistOverride(
+                INVOCATION_TYPE_HOME_BUTTON_LONG_PRESS));
+        assertFalse(mContextualSearchInvoker.runContextualSearchInvocationChecksAndLogFailures());
+        verifyNoMoreInteractions(mMockContextualSearchManager);
     }
 
     @Test

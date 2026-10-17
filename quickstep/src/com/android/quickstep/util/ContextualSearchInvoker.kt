@@ -87,7 +87,7 @@ internal constructor(
     /** @return Array of AssistUtils.INVOCATION_TYPE_* that we want to handle instead of SysUI. */
     fun getSysUiAssistOverrideInvocationTypes(): IntArray {
         val overrideInvocationTypes = com.android.launcher3.util.IntArray()
-        if (context.packageManager.hasSystemFeature(FEATURE_CONTEXTUAL_SEARCH)) {
+        if (isContextualSearchSupported()) {
             overrideInvocationTypes.add(AssistUtils.INVOCATION_TYPE_HOME_BUTTON_LONG_PRESS)
         }
         return overrideInvocationTypes.toArray()
@@ -103,7 +103,7 @@ internal constructor(
         config: ContextualSearchConfig? = null,
     ): Boolean {
         if (invocationType == AssistUtils.INVOCATION_TYPE_HOME_BUTTON_LONG_PRESS) {
-            if (!context.packageManager.hasSystemFeature(FEATURE_CONTEXTUAL_SEARCH)) {
+            if (!isContextualSearchSupported()) {
                 // When Contextual Search is disabled, fall back to Assistant.
                 return false
             }
@@ -149,8 +149,7 @@ internal constructor(
      */
     fun runContextualSearchInvocationChecksAndLogFailures(): Boolean {
         if (
-            contextualSearchManager == null ||
-                !context.packageManager.hasSystemFeature(FEATURE_CONTEXTUAL_SEARCH)
+            contextualSearchManager == null || !isContextualSearchSupported()
         ) {
             Log.i(TAG, "Contextual Search invocation failed: no ContextualSearchManager")
             statsLogManager.logger().log(LAUNCHER_LAUNCH_ASSISTANT_FAILED_SERVICE_ERROR)
@@ -193,6 +192,10 @@ internal constructor(
 
         return true
     }
+
+    private fun isContextualSearchSupported(): Boolean =
+        contextualSearchStateManager.isContextualSearchProviderConfigured &&
+            context.packageManager.hasSystemFeature(FEATURE_CONTEXTUAL_SEARCH)
 
     /**
      * Invoke Contextual Search via ContextualSearchService and do haptic

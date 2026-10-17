@@ -105,7 +105,7 @@ public class ContextualSearchStateManager  {
         mSystemUiProxy = systemUiProxy;
         mTopTaskTracker = topTaskTracker;
 
-        if (areAllContextualSearchFlagsDisabled()
+        if (!isContextualSearchProviderConfigured() || areAllContextualSearchFlagsDisabled()
                 || !context.getPackageManager().hasSystemFeature(FEATURE_CONTEXTUAL_SEARCH)) {
             // If we had previously registered a SystemAction which is no longer valid, we need to
             // unregister it here.
@@ -140,6 +140,11 @@ public class ContextualSearchStateManager  {
     /** Return {@code true} if the Settings toggle is enabled. */
     public final boolean isContextualSearchSettingEnabled() {
         return mIsContextualSearchSettingEnabled;
+    }
+
+    /** A declared system feature does not imply that the ROM configured a search provider. */
+    public final boolean isContextualSearchProviderConfigured() {
+        return !mContextualSearchPackage.isEmpty();
     }
 
     /** Whether search supports showing on the lockscreen. */
