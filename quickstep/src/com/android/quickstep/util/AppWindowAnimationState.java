@@ -59,7 +59,7 @@ public final class AppWindowAnimationState {
         private final int mTaskId, mWidth, mHeight, mRotation;
         private final long mSessionId;
         private final Pose mPose;
-        private final Session mSource;
+        private Session mSource;
         private final Matrix mWindowToHome = new Matrix();
         private final Matrix mCurrentMatrix = new Matrix();
         private final RectF mCurrentRect = new RectF();
@@ -84,13 +84,17 @@ public final class AppWindowAnimationState {
         public void takeOver() {
             Session owner = sSessions.get(mTaskId);
             if (owner == null || owner.mSessionId != mSessionId) return;
+            // A launch can switch to its snapshot after input selection but before takeover.
+            // Release the current owner when Shell has supplied the gesture's new targets.
+            mSource = owner;
             if (owner.mGestureOwned) {
                 owner.mGestureOwner = this;
                 return;
             }
-            if (owner.mOpeningTargets != null && owner.mOnGestureTakeover != null) {
-                // Stop the timeline, not the remote transition. The existing leash remains
-                // under the finger until Shell has supplied its replacement.
+            if (owner.mOnGestureTakeover != null
+                    && (owner.mOpeningTargets != null || owner.mStopContinuation != null)) {
+                // Freeze either the live launch or its snapshot until Shell supplies the
+                // replacement. Dropping the snapshot here exposes the fullscreen app.
                 owner.mGestureOwned = true;
                 owner.mGestureOwner = this;
                 Runnable takeOver = owner.mOnGestureTakeover;
@@ -215,15 +219,18 @@ public final class AppWindowAnimationState {
             if (old != null && old.mGestureOwned) old.finishGesture();
         }
 
-        private Session(Session source, Runnable stopContinuation) {
+        private Session(Session source, Runnable stopContinuation, Runnable pauseContinuation) {
             mTaskId = source.mTaskId;
             mSessionId = source.mSessionId;
             mWidth = source.mWidth;
             mHeight = source.mHeight;
             mRotation = source.mRotation;
+            mOpeningTaskInfo = source.mOpeningTaskInfo;
             previous = new Pose(source.mPose);
             copyPose(source.mPose);
             mStopContinuation = stopContinuation;
+            mOnGestureTakeover = pauseContinuation;
+            mReleaseGesture = stopContinuation;
             mInitialContinuationFrame = true;
             sSessions.put(mTaskId, this);
         }
@@ -240,8 +247,10 @@ public final class AppWindowAnimationState {
         }
 
         /** Transfer the visual tail without keeping the old remote transition alive. */
-        public @Nullable Session continueWith(Runnable stopContinuation) {
-            return mTaskId >= 0 && isActive() ? new Session(this, stopContinuation) : null;
+        public @Nullable Session continueWith(Runnable stopContinuation,
+                Runnable pauseContinuation) {
+            return mTaskId >= 0 && isActive()
+                    ? new Session(this, stopContinuation, pauseContinuation) : null;
         }
 
         public void record(RectF rect, float openness, float cornerRadius) {
@@ -368,7 +377,9 @@ public final class AppWindowAnimationState {
         long now = SystemClock.uptimeMillis();
         for (int i = 0; i < sSessions.size(); i++) {
             Session session = sSessions.valueAt(i);
-            if (session.mOpeningTaskInfo == null || session.mStopContinuation != null
+            // Opening snapshots still represent foreground apps. Closing snapshots have no
+            // opening task metadata and must not turn a desktop gesture into an app gesture.
+            if (session.mOpeningTaskInfo == null
                     || !session.isActive() || session.mPose.rect.isEmpty()
                     || session.mOpeningTaskInfo.displayId != displayId
                     || now - session.mPose.time >= 250) continue;

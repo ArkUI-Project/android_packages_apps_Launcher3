@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2020 The Android Open Source Project
+ * Modified by the ArkUI Project in 2026 for interrupted app launch handoffs.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -142,6 +143,33 @@ public class TaskViewSimulatorTest {
                 .verifyTopAnchoredLaunchHandoff();
     }
 
+    @Test
+    public void openingSnapshot_nextSwipeKeepsTaskIdentityAndReleasesFrozenFrame() {
+        new TaskMatrixVerifier()
+                .withLauncherSize(1200, 2450)
+                .withDensityDpi(420)
+                .withInsets(new Rect(0, 80, 0, 120))
+                .verifyOpeningSnapshotHandoff(false);
+    }
+
+    @Test
+    public void openingSnapshot_replacedAfterInputSelectionReleasesCurrentOwner() {
+        new TaskMatrixVerifier()
+                .withLauncherSize(1200, 2450)
+                .withDensityDpi(420)
+                .withInsets(new Rect(0, 80, 0, 120))
+                .verifyOpeningSnapshotHandoff(true);
+    }
+
+    @Test
+    public void closingSnapshot_doesNotClaimNextDesktopSwipe() {
+        new TaskMatrixVerifier()
+                .withLauncherSize(1200, 2450)
+                .withDensityDpi(420)
+                .withInsets(new Rect(0, 80, 0, 120))
+                .verifyClosingSnapshotIsNotOpening();
+    }
+
     private class TaskMatrixVerifier extends TransformParams {
 
         private Point mDisplaySize = new Point();
@@ -225,6 +253,86 @@ public class TaskViewSimulatorTest {
             } finally {
                 opening.finish();
                 target.leash.release();
+            }
+        }
+
+        void verifyOpeningSnapshotHandoff(boolean captureBeforeReplacement) {
+            final TaskViewSimulator tvs = createSimulator();
+            final RunningTaskInfo taskInfo = new RunningTaskInfo();
+            taskInfo.taskId = 43;
+            taskInfo.displayId = Display.DEFAULT_DISPLAY;
+            taskInfo.configuration.windowConfiguration.setActivityType(ACTIVITY_TYPE_STANDARD);
+            taskInfo.configuration.windowConfiguration.setWindowingMode(WINDOWING_MODE_FULLSCREEN);
+            final RemoteAnimationTarget target = new RemoteAnimationTarget(taskInfo.taskId,
+                    RemoteAnimationTarget.MODE_OPENING, new SurfaceControl(), false,
+                    new Rect(), mAppInsets, 0, new Point(), mAppBounds, mAppBounds,
+                    taskInfo.configuration.windowConfiguration, false, null, mAppBounds,
+                    taskInfo, false);
+            final AppWindowAnimationState.Session opening =
+                    AppWindowAnimationState.beginOpening(target, mDeviceProfile);
+            AppWindowAnimationState.Session continuation = null;
+            final int[] pauseCount = {0};
+            final int[] releaseCount = {0};
+            try {
+                final RectF launchCard = new RectF(280, 600, 920, 1400);
+                opening.record(launchCard, .4f, 24f, 0f);
+                AppWindowAnimationState.GestureHandoff handoff = captureBeforeReplacement
+                        ? AppWindowAnimationState.captureOpeningForGesture(Display.DEFAULT_DISPLAY)
+                        : null;
+                continuation = opening.continueWith(() -> releaseCount[0]++,
+                        () -> pauseCount[0]++);
+                Assert.assertNotNull(continuation);
+                opening.cancel();
+                opening.finish();
+                if (!captureBeforeReplacement) {
+                    handoff = AppWindowAnimationState.captureOpeningForGesture(
+                            Display.DEFAULT_DISPLAY);
+                }
+                Assert.assertNotNull(handoff);
+                Assert.assertSame(taskInfo, handoff.getTaskInfo());
+                handoff.takeOver();
+                handoff.takeOver();
+                Assert.assertEquals(1, pauseCount[0]);
+                Assert.assertEquals(0, releaseCount[0]);
+                Assert.assertTrue(continuation.isGestureOwned());
+                Assert.assertNull(handoff.getOpeningTargets());
+
+                // A snapshot has no live launch leash, but still seeds the new gesture's pose.
+                tvs.setPreview(target, null);
+                tvs.fullScreenProgress.value = 1;
+                tvs.recentsViewScale.value = tvs.getFullScreenScale();
+                tvs.setGestureHandoff(handoff);
+                mExpectedVisibleBounds = new RectF(launchCard);
+                tvs.apply(this);
+
+                handoff.releaseTargets();
+                handoff.finish();
+                Assert.assertEquals(1, releaseCount[0]);
+                Assert.assertNull(AppWindowAnimationState.captureOpeningForGesture(
+                        Display.DEFAULT_DISPLAY));
+            } finally {
+                if (continuation != null) continuation.finish();
+                opening.finish();
+                target.leash.release();
+            }
+        }
+
+        void verifyClosingSnapshotIsNotOpening() {
+            createSimulator();
+            final AppWindowAnimationState.Session closing =
+                    AppWindowAnimationState.begin(44, mDeviceProfile);
+            AppWindowAnimationState.Session continuation = null;
+            try {
+                closing.record(new RectF(280, 600, 920, 1400), .4f, 24f);
+                continuation = closing.continueWith(() -> { }, () -> { });
+                Assert.assertNotNull(continuation);
+                closing.cancel();
+                closing.finish();
+                Assert.assertNull(AppWindowAnimationState.captureOpeningForGesture(
+                        Display.DEFAULT_DISPLAY));
+            } finally {
+                if (continuation != null) continuation.finish();
+                closing.finish();
             }
         }
 

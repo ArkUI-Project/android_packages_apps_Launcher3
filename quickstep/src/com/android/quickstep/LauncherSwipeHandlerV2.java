@@ -1,5 +1,5 @@
 /*
- * Modified by the ArkUI Project in 2026 for landscape app return animations.
+ * Modified by the ArkUI Project in 2026 for landscape returns and interrupted launch handoffs.
  * Copyright (C) 2020 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,6 +24,8 @@ import static com.android.launcher3.views.FloatingIconView.SHAPE_PROGRESS_DURATI
 import static com.android.quickstep.util.FloatingIconViewHelper.getFloatingIconView;
 
 import android.animation.AnimatorSet;
+import android.app.TaskInfo;
+import android.content.ComponentName;
 import android.content.Context;
 import android.graphics.Rect;
 import android.graphics.RectF;
@@ -110,7 +112,7 @@ public class LauncherSwipeHandlerV2 extends AbsSwipeUpHandler<
                         : targetTaskView;
         final View workspaceView = findWorkspaceView(
                 targetTaskView == null ? launchCookies : Collections.emptyList(),
-                sourceTaskView);
+                sourceTaskView, targetTaskView == null ? runningTaskTarget : null);
         boolean canUseWorkspaceView = workspaceView != null
                 && workspaceView.isAttachedToWindow()
                 && workspaceView.getHeight() > 0
@@ -333,10 +335,24 @@ public class LauncherSwipeHandlerV2 extends AbsSwipeUpHandler<
      * associated with the running task.
      */
     @Nullable
-    private View findWorkspaceView(List<IBinder> launchCookies, TaskView sourceTaskView) {
+    private View findWorkspaceView(List<IBinder> launchCookies, @Nullable TaskView sourceTaskView,
+            @Nullable RemoteAnimationTarget runningTaskTarget) {
         if (mIsSwipingPipToHome) {
             // Disable if swiping to PIP
             return null;
+        }
+        if (runningTaskTarget != null && runningTaskTarget.taskInfo != null) {
+            // Remote task identity is ready before the recents list after a rapid icon launch.
+            // Prefer it over a missing or still-bound card from the preceding home gesture.
+            TaskInfo taskInfo = runningTaskTarget.taskInfo;
+            ComponentName component = taskInfo.baseActivity != null ? taskInfo.baseActivity
+                    : taskInfo.origActivity != null ? taskInfo.origActivity
+                    : taskInfo.realActivity != null ? taskInfo.realActivity : taskInfo.topActivity;
+            if (component != null) {
+                return mContainer.getFirstHomeElementForAppClose(
+                        StableViewInfo.fromLaunchCookies(launchCookies),
+                        component.getPackageName(), UserHandle.of(taskInfo.userId));
+            }
         }
         Task firstTask;
         if (sourceTaskView == null || ((firstTask = sourceTaskView.getFirstTask()) == null)

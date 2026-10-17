@@ -38,6 +38,7 @@ public final class WindowAnimationSnapshot extends Drawable
         implements View.OnAttachStateChangeListener, View.OnLayoutChangeListener {
     private static final int MAX_CAPTURE_EDGE = 1080;
     private static final int MAX_RUNNING = 3;
+    private static final long GESTURE_HANDOFF_TIMEOUT_MS = 5_000;
     private static final ArrayList<WindowAnimationSnapshot> sRunning = new ArrayList<>();
 
     private final View mHost;
@@ -56,6 +57,7 @@ public final class WindowAnimationSnapshot extends Drawable
     private @Nullable ObjIntConsumer<ScreenCaptureInternal.ScreenshotHardwareBuffer> mCaptureReply;
     private @Nullable ScreenCaptureInternal.ScreenCaptureListener mCaptureListener;
     private boolean mClosed;
+    private boolean mPausedForGesture;
     private final Runnable mTimeout = this::close;
 
     public WindowAnimationSnapshot(View host, SurfaceControl leash, Rect captureBounds,
@@ -126,7 +128,8 @@ public final class WindowAnimationSnapshot extends Drawable
             close();
             return;
         }
-        AppWindowAnimationState.Session continuation = mSession.continueWith(this::close);
+        AppWindowAnimationState.Session continuation = mSession.continueWith(
+                this::close, this::pauseForGesture);
         if (continuation == null) {
             close();
             return;
@@ -150,13 +153,16 @@ public final class WindowAnimationSnapshot extends Drawable
                 close();
             }
         });
+        // Initialize the held frame even if a gesture pauses us before capture completes.
+        tail.setCurrentPlayTime(playTime);
         // Capture may still be in flight when the next interaction cancels the live window.
         // Own the tail immediately, then catch up its clock when the bitmap arrives.
         startContinuation();
     }
 
     private void startContinuation() {
-        if (mClosed || mBitmap == null || mAnimator == null || mAnimator.isStarted()) return;
+        if (mClosed || mPausedForGesture || mBitmap == null
+                || mAnimator == null || mAnimator.isStarted()) return;
         float durationScale = ValueAnimator.getDurationScale();
         if (!mSession.isActive() || durationScale <= 0f) {
             close();
@@ -170,6 +176,16 @@ public final class WindowAnimationSnapshot extends Drawable
         }
         mAnimator.setCurrentPlayTime(playTime);
         mAnimator.start();
+    }
+
+    private void pauseForGesture() {
+        if (mClosed) return;
+        mPausedForGesture = true;
+        if (mAnimator != null) mAnimator.pause();
+        // The original animation deadline may expire before Shell delivers the new leash.
+        // Gesture release normally removes the frozen frame; retain a bounded fallback.
+        mHost.removeCallbacks(mTimeout);
+        mHost.postDelayed(mTimeout, GESTURE_HANDOFF_TIMEOUT_MS);
     }
 
     /** The matrix and crop use the same app coordinates as the live surface transaction. */
