@@ -15,6 +15,7 @@
  */
 package com.android.quickstep.inputconsumers;
 
+import static android.view.Display.DEFAULT_DISPLAY;
 import static android.view.MotionEvent.ACTION_CANCEL;
 import static android.view.MotionEvent.ACTION_DOWN;
 import static android.view.MotionEvent.ACTION_MOVE;
@@ -35,6 +36,7 @@ import android.content.Context;
 import android.content.ContextWrapper;
 import android.content.Intent;
 import android.graphics.PointF;
+import android.os.UserHandle;
 import android.util.Log;
 import android.view.MotionEvent;
 import android.view.VelocityTracker;
@@ -42,6 +44,7 @@ import android.window.TransitionInfo;
 
 import androidx.annotation.UiThread;
 
+import com.android.internal.arkui.SystemBarFollowSettings;
 import com.android.launcher3.R;
 import com.android.launcher3.Utilities;
 import com.android.launcher3.statehandlers.DesktopVisibilityController;
@@ -105,6 +108,7 @@ public class OtherActivityInputConsumer extends ContextWrapper implements InputC
 
     private final boolean mIsDeferredDownTarget;
     private final boolean mIsDeferredDownDevice;
+    private final boolean mDeferSystemBarFollow;
     private final PointF mDownPos = new PointF();
     private final PointF mLastPos = new PointF();
     private int mActivePointerId = INVALID_POINTER_ID;
@@ -160,6 +164,12 @@ public class OtherActivityInputConsumer extends ContextWrapper implements InputC
 
         boolean continuingPreviousGesture = mTaskAnimationManager.isRecentsAnimationRunning();
         mIsDeferredDownTarget = !continuingPreviousGesture && isDeferredDownTarget;
+        // A prepared recents transition already shows the animation-only navigation handle.
+        // Wait for actual movement so a bottom-edge tap cannot reveal it. Keep active gesture
+        // continuations immediate, since their app surface is already being animated.
+        mDeferSystemBarFollow = !continuingPreviousGesture
+                && mDeviceState.getDisplayId() == DEFAULT_DISPLAY
+                && SystemBarFollowSettings.navigationEnabled(base, UserHandle.myUserId());
         // TODO: 432133436 - Remove mIsDeferredDownDevice when a proper fix is merged.
         final DesktopVisibilityController desktopVisibilityController =
                 DesktopVisibilityController.INSTANCE.get(base);
@@ -610,7 +620,7 @@ public class OtherActivityInputConsumer extends ContextWrapper implements InputC
     }
 
     private boolean needDeferDown() {
-        return mIsDeferredDownTarget || mIsDeferredDownDevice;
+        return mIsDeferredDownTarget || mIsDeferredDownDevice || mDeferSystemBarFollow;
     }
 
     /**
