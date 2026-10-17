@@ -926,8 +926,9 @@ public abstract class AbsSwipeUpHandler<
             // The window is going away so make sure recents is always visible in this case.
             recentsAttachedToAppWindow = true;
         } else {
-            recentsAttachedToAppWindow = mSmallWindowSwipe != null
-                    || mHasMotionEverBeenPaused || mIsLikelyToStartNewTask;
+            // Preparing the small-window drag is not an overview gesture. Keep sibling
+            // cards hidden until the user pauses or starts a horizontal quick switch.
+            recentsAttachedToAppWindow = mHasMotionEverBeenPaused || mIsLikelyToStartNewTask;
         }
 
         if (!isGestureMode) {
@@ -1103,8 +1104,8 @@ public abstract class AbsSwipeUpHandler<
         mSmallWindowSwipe = new com.android.quickstep.util.SmallWindowSwipePreview(mContext,
                 mRemoteTargetHandles[0], target, mContainer.getDragLayer(), canSplit,
                 this::updateSmallWindowContentAlpha);
-        // Adjacent cards accompany the upward drag before the finger pauses in overview.
-        maybeUpdateRecentsAttachedState(true /* animate */);
+        // The preview owns the live app transform; the pause/quick-switch callbacks own
+        // whether adjacent cards are attached. Arming it must not reveal those cards.
         updateSmallWindowContentAlpha();
     }
 
