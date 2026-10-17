@@ -788,10 +788,13 @@ public abstract class RecentsView<
     private boolean mSmallWindowPreviewActive;
     private final RectF mSmallWindowPreviewSource = new RectF();
     private final RectF mSmallWindowPreviewBounds = new RectF();
+    private final Rect mSmallWindowPreviewTaskBounds = new Rect();
     private final float[] mSmallWindowPreviewPoints = new float[8];
+    private final float[] mSmallWindowPreviewTaskPoints = new float[4];
     private final int[] mSmallWindowPreviewHostLocation = new int[2];
     private float mSmallWindowFollowProgress;
     private float mSmallWindowRecentsRetreat;
+    private float mSmallWindowReleaseProgress;
     @ViewDebug.ExportedProperty(category = "launcher")
     protected float mFullscreenProgress = 0;
     /**
@@ -4954,12 +4957,13 @@ public abstract class RecentsView<
 
     /** Keep adjacent cards attached to the dragged app, then let them recede on selection. */
     public void setSmallWindowPreviewTransform(RectF source, RectF bounds,
-            float followProgress, float retreat) {
+            float followProgress, float retreat, float releaseProgress) {
         if (source.isEmpty() || bounds.isEmpty()
                 || (followProgress <= 0f && mSmallWindowPreviewSource.isEmpty())) return;
         mSmallWindowPreviewSource.set(source);
         mSmallWindowPreviewBounds.set(bounds);
         mSmallWindowRecentsRetreat = Utilities.boundToRange(retreat, 0f, 1f);
+        mSmallWindowReleaseProgress = Utilities.boundToRange(releaseProgress, 0f, 1f);
         if (mSmallWindowFollowProgress != followProgress) {
             mSmallWindowFollowProgress = followProgress;
             // Held cards fan out into a row; restore the configured stack after the gesture.
@@ -4996,11 +5000,40 @@ public abstract class RecentsView<
             points[i + 1] -= mSmallWindowPreviewHostLocation[1];
         }
         Utilities.mapCoordInSelfToDescendant(this, host, points);
+        float sourceLeft = points[0];
+        float sourceTop = points[1];
         float sourceWidth = points[2] - points[0];
         if (sourceWidth <= 0f) return;
-        float scale = (points[6] - points[4]) / sourceWidth;
-        float translationX = points[4] - points[0] * scale;
-        float translationY = points[5] - points[1] * scale;
+        TaskView runningTask = getRunningTaskView();
+        if (runningTask != null) {
+            // The simulator callback precedes Launcher scale/scroll updates. Anchor to the
+            // actual thumbnail in this draw, including its current stack transform.
+            runningTask.getThumbnailBounds(mSmallWindowPreviewTaskBounds);
+            if (!mSmallWindowPreviewTaskBounds.isEmpty()) {
+                float[] taskPoints = mSmallWindowPreviewTaskPoints;
+                taskPoints[0] = mSmallWindowPreviewTaskBounds.left;
+                taskPoints[1] = mSmallWindowPreviewTaskBounds.top;
+                taskPoints[2] = mSmallWindowPreviewTaskBounds.right;
+                taskPoints[3] = mSmallWindowPreviewTaskBounds.top;
+                Utilities.getDescendantCoordRelativeToAncestor(runningTask, this, taskPoints,
+                        false);
+                sourceLeft = taskPoints[0];
+                sourceTop = taskPoints[1];
+                sourceWidth = taskPoints[2] - taskPoints[0];
+            }
+        }
+        if (sourceWidth <= 0f) return;
+        // An overview release returns to the current layout, not the simulator's frozen frame.
+        // At progress 1 the transform is identity, so clearing it cannot reveal a size jump.
+        float targetLeft = points[4]
+                + (sourceLeft - points[0]) * mSmallWindowReleaseProgress;
+        float targetTop = points[5]
+                + (sourceTop - points[1]) * mSmallWindowReleaseProgress;
+        float targetWidth = points[6] - points[4]
+                + (sourceWidth - (points[2] - points[0])) * mSmallWindowReleaseProgress;
+        float scale = targetWidth / sourceWidth;
+        float translationX = targetLeft - sourceLeft * scale;
+        float translationY = targetTop - sourceTop * scale;
         for (TaskView task : getTaskViews()) {
             if (task.isRunningTask()) {
                 task.setSwipePreviewTransform(1f, 0f, 0f);
@@ -5016,6 +5049,7 @@ public abstract class RecentsView<
         mSmallWindowPreviewBounds.setEmpty();
         mSmallWindowFollowProgress = 0f;
         mSmallWindowRecentsRetreat = 0f;
+        mSmallWindowReleaseProgress = 0f;
         for (TaskView task : getTaskViews()) {
             task.setSwipePreviewTransform(1f, 0f, 0f);
         }

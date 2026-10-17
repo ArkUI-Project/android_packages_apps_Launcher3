@@ -1814,24 +1814,27 @@ public abstract class AbsSwipeUpHandler<
                 && mSmallWindowSwipe != null
                 && mSmallWindowSwipe.hasActiveTransform()) {
             mSmallWindowSettling = true;
-            mSmallWindowSwipe.beginRelease(false, endTarget == RECENTS);
+            final com.android.quickstep.util.SmallWindowSwipePreview preview = mSmallWindowSwipe;
+            // The normal attach animation will hide cards when returning to an app. Fading
+            // them here would flash them back in when the preview mask is cleared.
+            preview.beginRelease(false, endTarget.recentsAttachedToAppWindow);
             final ValueAnimator rollback = ValueAnimator.ofFloat(0f, 1f);
             rollback.setDuration(180);
             rollback.addUpdateListener(anim -> {
-                if (mSmallWindowSwipe != null) {
-                    mSmallWindowSwipe.progress = (float) anim.getAnimatedValue();
-                    mSmallWindowSwipe.apply();
-                    updateSmallWindowContentAlpha();
-                }
+                if (mSmallWindowSwipe != preview) return;
+                preview.progress = (float) anim.getAnimatedValue();
+                preview.apply();
+                updateSmallWindowContentAlpha();
             });
             rollback.addListener(new AnimationSuccessListener() {
                 @Override
                 public void onAnimationSuccess(Animator animation) {
+                    if (mSmallWindowSwipe != preview) return;
                     clearSmallWindowSwipe();
                     if (mRecentsAnimationController != null && !mCanceled
                             && !mStateCallback.hasStates(STATE_HANDLER_INVALIDATED)) {
-                        handleNormalGestureEnd(0f, false, new PointF(), isCancel,
-                                horizontalTouchSlopPassed);
+                        // Keep the finger-up decision while the page and preview settle.
+                        finishNormalGestureEnd(endTarget, false, new PointF());
                     }
                 }
             });
@@ -1839,6 +1842,11 @@ public abstract class AbsSwipeUpHandler<
             rollback.start();
             return;
         }
+        finishNormalGestureEnd(endTarget, isFling, velocityPxPerMs);
+    }
+
+    private void finishNormalGestureEnd(GestureEndTarget endTarget, boolean isFling,
+            PointF velocityPxPerMs) {
         if (!mSmallWindowCommitted && mSplitTaskFromSwipe == -1) {
             if (endTarget == HOME && mAppAnimationHandoff != null && mDp != null) {
                 AppWindowAnimationState.Pose pose = mAppAnimationHandoff.getPose(

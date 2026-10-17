@@ -261,7 +261,8 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
     public void updateRecentsView(RecentsView<?, ?> recents) {
         updateRecentsBounds();
         recents.setSmallWindowPreviewTransform(mNormal, mRecentsBounds,
-                mFollowProgress * (mReleasing ? 1f - progress : 1f), getRecentsRetreat());
+                mFollowProgress * (mReleasing ? 1f - progress : 1f), getRecentsRetreat(),
+                mReleasing && mShowRecentsOnRelease ? progress : 0f);
         recents.setSmallWindowPreviewAlpha(true, getRecentsAlpha());
     }
 
@@ -269,7 +270,9 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
         if (mReleasing) {
             interpolate(mReleaseRecentsBounds, mReleaseEnd, progress, mRecentsBounds);
         } else if (!mCurrent.isEmpty() && mMaterialPositionInitialized) {
-            float width = Math.max(1f, mMaterialWidth);
+            // The material spring can still hold the fullscreen width after the app shrinks.
+            // Let neighbors trail its position without briefly growing larger than the app.
+            float width = Math.min(Math.max(1f, mMaterialWidth), mCurrent.width());
             float height = width * mCurrent.height() / mCurrent.width();
             mRecentsBounds.set(mMaterialX - width / 2f, mMaterialY,
                     mMaterialX + width / 2f, mMaterialY + height);
