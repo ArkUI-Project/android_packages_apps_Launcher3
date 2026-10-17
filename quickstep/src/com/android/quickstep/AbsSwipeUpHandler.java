@@ -2447,15 +2447,14 @@ public abstract class AbsSwipeUpHandler<
     private void animateSmallWindowToCorner() {
         mSmallWindowSettling = true;
         mSmallWindowSwipe.beginRelease(true, false);
-        final long duration = mSmallWindowSwipe.getSmallWindowReleaseDuration();
-        final HomeAnimationFactory home = createSmallWindowHomeAnimationFactory(duration);
+        final HomeAnimationFactory home = createSmallWindowHomeAnimationFactory(220);
         final AnimatorPlaybackController launcher = home.createActivityAnimationToHome();
         launcher.dispatchOnStart();
         home.playAtomicAnimation(0f);
         mLauncherTransitionController = null;
         final ValueAnimator animator = ValueAnimator.ofFloat(0f, 1f);
-        animator.setDuration(duration);
-        animator.setInterpolator(mSmallWindowSwipe.getSmallWindowReleaseInterpolator());
+        animator.setDuration(220);
+        animator.setInterpolator(DECELERATE);
         animator.addUpdateListener(value -> {
             if (mSmallWindowSwipe == null) return;
             mSmallWindowSwipe.progress = (float) value.getAnimatedValue();

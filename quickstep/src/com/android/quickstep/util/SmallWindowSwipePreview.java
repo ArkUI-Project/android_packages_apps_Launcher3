@@ -4,12 +4,8 @@
  */
 package com.android.quickstep.util;
 
-import static com.android.app.animation.Interpolators.DECELERATE;
-import static com.android.app.animation.Interpolators.LINEAR;
-
 import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
-import android.animation.TimeInterpolator;
 import android.animation.ValueAnimator;
 import android.content.Context;
 import android.graphics.Bitmap;
@@ -35,7 +31,6 @@ import androidx.dynamicanimation.animation.SpringAnimation;
 import androidx.dynamicanimation.animation.SpringForce;
 
 import com.android.internal.arkui.SmallWindowBounds;
-import com.android.internal.arkui.SmallWindowSettings;
 import com.android.internal.graphics.drawable.BackgroundBlurDrawable;
 import com.android.launcher3.Utilities;
 import com.android.launcher3.anim.DesktopAnimationSettings;
@@ -59,13 +54,11 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
     private static final float ENTRY_REACH_X = .43f;
     private static final float ENTRY_REACH_Y = .20f;
     private static final float ENTRY_EXIT_DISTANCE = 1.12f;
-    private static final long DEFORMATION_CAPTURE_MAX_AGE_MS = 250;
 
     private final RemoteTargetHandle mHandle;
     private final RemoteAnimationTarget mTask;
     private final View mOverlayHost;
     private final boolean mCanSplit;
-    private final boolean mHyperOs;
     private final float mWidth;
     private final float mHeight;
     private final float mDensity;
@@ -84,7 +77,6 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
     private final Matrix mNormalMatrix = new Matrix();
     private final Matrix mMatrix = new Matrix();
     private final Matrix mReleaseMatrix = new Matrix();
-    private final Matrix mDeformationMatrix = new Matrix();
     private final Rect mCrop = new Rect();
     private final RectF mNormal = new RectF();
     private final RectF mCurrent = new RectF();
@@ -97,7 +89,6 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
     private final RectF mReleaseEnd = new RectF();
     private final RectF mRecentsBounds = new RectF();
     private final RectF mReleaseRecentsBounds = new RectF();
-    private final RectF mDeformationBounds = new RectF();
     private final Targets mTargets;
     private final int[] mHostLocation = new int[2];
     private final float[] mMatrixValues = new float[9];
@@ -136,9 +127,6 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
     private boolean mShowRecentsOnRelease;
     private int mTarget;
     private Bitmap mSnapshot;
-    private IosWindowDeformation mDeformation;
-    private long mDeformationCaptureTime;
-    private float mDeformationAlpha;
     public float progress;
 
     public SmallWindowSwipePreview(Context context, RemoteTargetHandle handle,
@@ -149,7 +137,6 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
         mTask = task;
         mOverlayHost = overlayHost;
         mCanSplit = canSplit;
-        mHyperOs = SmallWindowSettings.isHyperOsMode(context);
         mWindowManager = context.getSystemService(WindowManager.class);
         final WindowMetrics metrics = mWindowManager.getMaximumWindowMetrics();
         final Rect display = metrics.getBounds();
@@ -194,15 +181,6 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
 
     public int getTarget() {
         return mTarget;
-    }
-
-    public long getSmallWindowReleaseDuration() {
-        return mHyperOs ? mMotion.openDuration : 220;
-    }
-
-    public TimeInterpolator getSmallWindowReleaseInterpolator() {
-        // Perspective and the independent size curves use an uneased timeline.
-        return mHyperOs ? LINEAR : DECELERATE;
     }
 
     public boolean hasActiveTransform() {
@@ -338,7 +316,6 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
         // Progress remains the release contract with AbsSwipeUpHandler. Entry/exit is determined
         // by the finger, so a fast crossing does not have to wait for the material spring.
         progress = mTarget == TARGET_NONE ? 0f : 1f;
-        if (mTarget == TARGET_SMALL_WINDOW) prepareDeformation();
         float splitReveal = mTarget == TARGET_SPLIT ? 1f : 0f;
         float windowReveal = mTarget == TARGET_SMALL_WINDOW ? 1f : 0f;
         if (splitReveal != mRequestedSplitReveal) {
@@ -493,14 +470,6 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
         mReleaseRecentsBounds.set(mRecentsBounds);
         mReleasing = true;
         mToSmallWindow = toSmallWindow;
-        if (toSmallWindow) {
-            // A long hold can outlive the captured app content (for example video or a clock).
-            if (SystemClock.uptimeMillis() - mDeformationCaptureTime
-                    > DEFORMATION_CAPTURE_MAX_AGE_MS) closeDeformation();
-            prepareDeformation();
-        } else {
-            closeDeformation();
-        }
         mShowRecentsOnRelease = showRecents;
         stopTargetSprings();
         mTargets.freeze();
@@ -514,46 +483,13 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
 
     public void apply() {
         if (!mReleasing || mClosed || !mTask.leash.isValid() || mReleaseStart.isEmpty()) return;
-        if (mToSmallWindow && mHyperOs) {
-            // Like the iOS home animation, position and size settle on separate curves.
-            // Height closes slightly ahead of width, giving the card a soft stretch.
-            float position = mMotion.homeInterpolator.getInterpolation(progress);
-            float widthProgress = mMotion.homeSizeInterpolator.getInterpolation(progress);
-            float heightProgress = mMotion.homeSizeInterpolator.getInterpolation(
-                    Math.min(1f, progress / .85f));
-            float width = mReleaseStart.width()
-                    + (mReleaseEnd.width() - mReleaseStart.width()) * widthProgress;
-            float height = mReleaseStart.height()
-                    + (mReleaseEnd.height() - mReleaseStart.height()) * heightProgress;
-            float centerX = mReleaseStart.centerX()
-                    + (mReleaseEnd.centerX() - mReleaseStart.centerX()) * position;
-            float centerY = mReleaseStart.centerY()
-                    + (mReleaseEnd.centerY() - mReleaseStart.centerY()) * position;
-            mCurrent.set(centerX - width / 2f, centerY - height / 2f,
-                    centerX + width / 2f, centerY + height / 2f);
-        } else {
-            interpolate(mReleaseStart, mReleaseEnd, progress, mCurrent);
-        }
+        interpolate(mReleaseStart, mReleaseEnd, progress, mCurrent);
         transform(mReleaseMatrix, mReleaseStart, mCurrent);
         float endRadius = mToSmallWindow ? surfaceRadius(mDestinationRadius) : mNormalRadius;
         mRadius = mReleaseRadius + (endRadius - mReleaseRadius) * progress;
-        float deformationAlpha = 0f;
-        if (mDeformation != null && mToSmallWindow) {
-            mOverlayHost.getLocationOnScreen(mHostLocation);
-            mDeformationMatrix.set(mMatrix);
-            mDeformationMatrix.postTranslate(-mHostLocation[0], -mHostLocation[1]);
-            mDeformationBounds.set(mCurrent);
-            mDeformationBounds.offset(-mHostLocation[0], -mHostLocation[1]);
-            // The card is flat after the first half. Return to live content before Shell
-            // resizes the task, so the handoff never exposes a stale or transparent frame.
-            float visibility = 1f - smoothstep((progress - .70f) / .20f);
-            deformationAlpha = mDeformation.update(mDeformationMatrix, mCrop, mRadius, 1f,
-                    mDeformationBounds, progress, 1f - progress, false, visibility);
-        }
-        mDeformationAlpha = deformationAlpha;
         final SurfaceTransaction transaction = new SurfaceTransaction();
         transaction.forSurface(mTask.leash).setMatrix(mMatrix).setWindowCrop(mCrop)
-                .setAlpha(1f - deformationAlpha).setCornerRadius(mRadius);
+                .setAlpha(1f).setCornerRadius(mRadius);
         mHandle.getTransformParams().applySurfaceParams(transaction);
         mTargets.update();
     }
@@ -563,7 +499,6 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
         mClosed = true;
         if (mTargetFade != null) mTargetFade.cancel();
         mSnapshot = null;
-        closeDeformation();
         stopTargetSprings();
         mWindowManager.removeCrossWindowBlurEnabledListener(mBlurListener);
         detachTransform();
@@ -581,7 +516,6 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
     /** Release the window immediately; only the two target indicators finish fading out. */
     public void finishToHome() {
         if (mClosed || mTargetFade != null) return;
-        closeDeformation();
         stopTargetSprings();
         mTargets.freeze();
         detachTransform();
@@ -599,31 +533,6 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
             }
         });
         mTargetFade.start();
-    }
-
-    private void prepareDeformation() {
-        if (!mHyperOs || mDeformation != null || mTask.isTranslucent
-                || mTask.rotationChange != 0) return;
-        Rect source = mTask.startBounds == null || mTask.startBounds.isEmpty()
-                ? mTask.screenSpaceBounds : mTask.startBounds;
-        // Prepare one bounded capture upon entering the target, ahead of release. The live
-        // leash remains visible throughout the drag and if capture is unavailable/secure.
-        mDeformationCaptureTime = SystemClock.uptimeMillis();
-        mDeformation = new IosWindowDeformation(mOverlayHost, mTask.leash,
-                new Rect(0, 0, source.width(), source.height()), 0);
-    }
-
-    private void closeDeformation() {
-        if (mDeformation == null) return;
-        if (mDeformationAlpha > 0f && mTask.leash.isValid()) {
-            // A cancelled release must not leave the app hidden after removing its bitmap.
-            SurfaceTransaction transaction = new SurfaceTransaction();
-            transaction.forSurface(mTask.leash).setAlpha(1f);
-            mHandle.getTransformParams().applySurfaceParams(transaction);
-        }
-        mDeformationAlpha = 0f;
-        mDeformation.close();
-        mDeformation = null;
     }
 
     private void transform(Matrix source, RectF from, RectF to) {

@@ -87,11 +87,8 @@ public final class IosWindowDeformation extends Drawable
             close();
         }
         if (mClosed) return;
-        // Interactive owners pass zero and close the capture on gesture cancellation/handoff.
-        if (duration > 0) {
-            host.postDelayed(mTimeout,
-                    Math.round(duration * Math.max(1f, ValueAnimator.getDurationScale())) + 200);
-        }
+        host.postDelayed(mTimeout,
+                Math.round(duration * Math.max(1f, ValueAnimator.getDurationScale())) + 200);
         host.addOnAttachStateChangeListener(this);
         host.addOnLayoutChangeListener(this);
     }
@@ -99,12 +96,6 @@ public final class IosWindowDeformation extends Drawable
     /** Returns the fraction of the live surface replaced by the perspective card. */
     public float update(Matrix appToHome, Rect crop, float radius, float alpha,
             RectF homeRect, float time, float openness, boolean opening) {
-        return update(appToHome, crop, radius, alpha, homeRect, time, openness, opening, 1f);
-    }
-
-    /** Allows an interactive owner to return to the live app before its final handoff. */
-    public float update(Matrix appToHome, Rect crop, float radius, float alpha,
-            RectF homeRect, float time, float openness, boolean opening, float visibility) {
         if (mClosed || mBitmap == null || !mHost.isShown()) return 0f;
         // A late capture must never replace a nearly full-screen, already live app.
         if (opening && time >= .75f) {
@@ -121,7 +112,7 @@ public final class IosWindowDeformation extends Drawable
         float exit = opening ? Utilities.boundToRange((.75f - time) / .15f, 0f, 1f) : 1f;
         // Swap at identical geometry, then bend the card. Cross-fading an already bent
         // snapshot with the rectangular live surface produces two visible window edges.
-        mBlend = exit * Utilities.boundToRange(visibility, 0f, 1f);
+        mBlend = exit;
         mAppToHome.set(appToHome);
         mDeformation.set(mShape.matrix(homeRect,
                 IosWindowShape.amount(time, openness, opening) * enter, opening));
