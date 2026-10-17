@@ -58,6 +58,7 @@ public final class WindowAnimationSnapshot extends Drawable
     private @Nullable ScreenCaptureInternal.ScreenCaptureListener mCaptureListener;
     private boolean mClosed;
     private boolean mPausedForGesture;
+    private @Nullable Runnable mOnCloseListener;
     private final Runnable mTimeout = this::close;
 
     public WindowAnimationSnapshot(View host, SurfaceControl leash, Rect captureBounds,
@@ -211,6 +212,12 @@ public final class WindowAnimationSnapshot extends Drawable
         return !mClosed && mAnimator != null;
     }
 
+    /** Release any icon paired with this tail on completion, replacement, or capture failure. */
+    public void setOnCloseListener(Runnable listener) {
+        if (mClosed) listener.run();
+        else mOnCloseListener = listener;
+    }
+
     public void onSourceFinished() {
         if (!isContinuing()) close();
     }
@@ -231,6 +238,9 @@ public final class WindowAnimationSnapshot extends Drawable
         // Dropping the hardware bitmap releases our reference without recycling a buffer
         // which RenderThread may still be reading from the preceding frame.
         mBitmap = null;
+        final Runnable onClose = mOnCloseListener;
+        mOnCloseListener = null;
+        if (onClose != null) onClose.run();
     }
 
     @Override

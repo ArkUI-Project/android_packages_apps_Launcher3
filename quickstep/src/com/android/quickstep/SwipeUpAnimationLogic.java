@@ -240,6 +240,10 @@ public abstract class SwipeUpAnimationLogic implements
 
         public void onCancel() { }
 
+        public void onAnimationContinuationStart() { }
+
+        public void onAnimationContinuationEnd() { }
+
         /**
          * @param progress The progress of the animation to the home screen.
          * @return The current alpha to set on the animating app window.
@@ -558,8 +562,14 @@ public abstract class SwipeUpAnimationLogic implements
                 mSnapshot = new WindowAnimationSnapshot(host, targets.getFirstAppTarget().leash,
                         mCropRect, mMotionState, SystemBarFollowAnimation.getSurface(targets,
                                 targets.getFirstAppTarget()));
-                windowAnimation.setOnCancelContinuation(() -> mSnapshot.continueAnimation(
-                        windowAnimation, this::updateSnapshot));
+                windowAnimation.setOnCancelContinuation(() -> {
+                    mSnapshot.continueAnimation(windowAnimation, this::updateSnapshot);
+                    if (mSnapshot.isContinuing()) {
+                        mAnimationFactory.onAnimationContinuationStart();
+                        mSnapshot.setOnCloseListener(
+                                mAnimationFactory::onAnimationContinuationEnd);
+                    }
+                });
             } else {
                 mSnapshot = null;
             }
@@ -605,6 +615,9 @@ public abstract class SwipeUpAnimationLogic implements
             mSnapshot.update(mSnapshotMatrix, mCropRect, radius,
                     mAnimationFactory.getWindowAlpha(progress), currentRect,
                     getOpenness(progress), mSnapshotMatrix.mapRadius(radius), mVerticalCropAnchor);
+            // The original remote animation has stopped, but the icon must finish the same
+            // geometry and crossfade as the captured app instead of disappearing mid-flight.
+            mAnimationFactory.update(currentRect, progress, mMatrix.mapRadius(radius), 0);
         }
 
         @Override

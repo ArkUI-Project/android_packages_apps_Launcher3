@@ -144,16 +144,23 @@ public class RectFSpringAnim extends ReleaseCheck {
         }
         final float elapsed = mHomeElapsed;
         final float startWidth = mStartRect.width(), startHeight = mStartRect.height();
-        final float endWidth = mTargetRect.width(), endHeight = mTargetRect.height();
         final RectF rect = new RectF();
         ValueAnimator tail = ValueAnimator.ofFloat(elapsed, mMotion.homeDuration);
         tail.setDuration(Math.max(1L, Math.round(mMotion.homeDuration - elapsed)));
         tail.setInterpolator(com.android.app.animation.Interpolators.LINEAR);
         tail.addUpdateListener(animation -> {
             float time = (float) animation.getAnimatedValue();
+            mHomeElapsed = time;
+            // The source is cancelled, so its target-change callback no longer retargets
+            // the springs. Follow the icon's live bounds from the continuation instead.
+            mHomeX.retarget(mTargetRect.centerX(), time);
+            mHomeY.retarget(mTargetRect.centerY(), time);
+            float endWidth = mTargetRect.width(), endHeight = mTargetRect.height();
             float curve = mMotion.homeInterpolator.getInterpolation(time / mMotion.homeDuration);
-            float x = mMotion.isIos ? mHomeX.value(time) : mHomeX.value(time, curve);
-            float y = mMotion.isIos ? mHomeY.value(time) : mHomeY.value(time, curve);
+            float x = time >= mMotion.homeDuration ? mTargetRect.centerX()
+                    : mMotion.isIos ? mHomeX.value(time) : mHomeX.value(time, curve);
+            float y = time >= mMotion.homeDuration ? mTargetRect.centerY()
+                    : mMotion.isIos ? mHomeY.value(time) : mHomeY.value(time, curve);
             float size = mHomeSize.value(time);
             float width = boundSizeProgress(mHomeWidth.value(time), startWidth, endWidth);
             float boundedSize = boundSizeProgress(size, startHeight, endHeight);

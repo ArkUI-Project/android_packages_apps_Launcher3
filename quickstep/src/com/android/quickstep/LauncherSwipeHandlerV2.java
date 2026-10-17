@@ -167,9 +167,6 @@ public class LauncherSwipeHandlerV2 extends AbsSwipeUpHandler<
         float windowAlphaThreshold = 1f - SHAPE_PROGRESS_DURATION;
 
         return new FloatingViewHomeAnimationFactory(floatingIconView) {
-            @Nullable
-            private RectF mTargetRect;
-
             @Override
             public boolean supportsLandscapeAnimation() {
                 return true;
@@ -190,10 +187,8 @@ public class LauncherSwipeHandlerV2 extends AbsSwipeUpHandler<
             @NonNull
             @Override
             public RectF getWindowTargetRect() {
-                if (mTargetRect == null) {
-                    mTargetRect = new RectF(iconLocation);
-                }
-                return mTargetRect;
+                // FloatingIconView updates this as workspace scale and position settle.
+                return iconLocation;
             }
 
             @Override
@@ -208,6 +203,16 @@ public class LauncherSwipeHandlerV2 extends AbsSwipeUpHandler<
                     // animation interrupted by Launcher should finalize the home transition.
                     if (mSiblingAnimation.isRunning()) finishHomeAnimationAtCurrentPosition();
                 });
+            }
+
+            @Override
+            public void onAnimationContinuationStart() {
+                floatingIconView.startAnimationContinuation();
+            }
+
+            @Override
+            public void onAnimationContinuationEnd() {
+                floatingIconView.endAnimationContinuation();
             }
 
             @Override

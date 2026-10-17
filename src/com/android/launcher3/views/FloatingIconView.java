@@ -96,6 +96,7 @@ public class FloatingIconView extends FrameLayout implements
     private final boolean mIsRtl;
 
     private boolean mIsOpening;
+    private boolean mIsAnimationContinuing;
 
     private IconLoadResult mIconLoadResult;
 
@@ -227,6 +228,7 @@ public class FloatingIconView extends FrameLayout implements
 
     @Override
     public void onAnimationEnd(Animator animator) {
+        if (mIsAnimationContinuing) return;
         if (mLoadIconSignal != null) {
             mLoadIconSignal.cancel();
         }
@@ -531,13 +533,32 @@ public class FloatingIconView extends FrameLayout implements
         mFastFinishRunnable = runnable;
     }
 
+    /** Keep the closing icon alive after its remote window has been released. */
+    public void startAnimationContinuation() {
+        mIsAnimationContinuing = true;
+        mFastFinishRunnable = null;
+        mOnTargetChangeRunnable = null;
+        // The visual tail must not participate in the next launch's floating-view cleanup.
+        if (mListenerView.getParent() instanceof ViewGroup parent) {
+            parent.removeView(mListenerView);
+        }
+    }
+
+    public void endAnimationContinuation() {
+        mIsAnimationContinuing = false;
+        fastFinish();
+    }
+
     @Override
     public void fastFinish() {
+        if (mIsAnimationContinuing) return;
         if (mFastFinishRunnable != null) {
             Runnable finish = mFastFinishRunnable;
             mFastFinishRunnable = null;
             // Cancellation can re-enter fastFinish through an animation factory's cleanup.
             finish.run();
+            // finish() may hand this icon to a snapshot instead of ending its visual tail.
+            if (mIsAnimationContinuing) return;
         }
         if (mLoadIconSignal != null) {
             mLoadIconSignal.cancel();
@@ -775,6 +796,7 @@ public class FloatingIconView extends FrameLayout implements
         mEndRunnable = null;
         mFinalDrawableBounds.setEmpty();
         mIsOpening = false;
+        mIsAnimationContinuing = false;
         mPositionOut = null;
         mListenerView.setListener(null);
         mListenerView.setCloseOnTouch(true);
