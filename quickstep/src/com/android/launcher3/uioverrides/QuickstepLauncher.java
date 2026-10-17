@@ -268,6 +268,7 @@ public class QuickstepLauncher extends Launcher implements RecentsViewContainer,
     private HotseatPredictionController mHotseatPredictionController;
     private DepthController mDepthController;
     private QuickstepTransitionManager mAppTransitionManager;
+    private LauncherUnlockAnimationController mUnlockAnimationController;
 
     private OverviewActionsView<?> mActionsView;
     private TISBindHelper mTISBindHelper;
@@ -453,12 +454,14 @@ public class QuickstepLauncher extends Launcher implements RecentsViewContainer,
 
     @Override
     public void onConfigurationChanged(Configuration newConfig) {
+        if (mUnlockAnimationController != null) mUnlockAnimationController.finish();
         super.onConfigurationChanged(newConfig);
         onStateOrResumeChanging(false /* inTransition */);
     }
 
     @Override
     public RunnableList startActivitySafely(View v, Intent intent, ItemInfo item) {
+        if (mUnlockAnimationController != null) mUnlockAnimationController.finish();
         PredictionRowView<?> predictionRowView =
                 getAppsView().getFloatingHeaderView().findFixedRowByType(PredictionRowView.class);
         // Pause the prediction row updates until the transition (if it exists) ends.
@@ -692,6 +695,7 @@ public class QuickstepLauncher extends Launcher implements RecentsViewContainer,
 
     @Override
     public void onDestroy() {
+        if (mUnlockAnimationController != null) mUnlockAnimationController.destroy();
         if (mAppTransitionManager != null) {
             mAppTransitionManager.onActivityDestroyed();
         }
@@ -723,6 +727,14 @@ public class QuickstepLauncher extends Launcher implements RecentsViewContainer,
         super.onDestroy();
         if (mViewCapture != null) mViewCapture.close();
         removeBackAnimationCallback(mSplitSelectStateController.getSplitBackHandler());
+    }
+
+    @Override
+    public void onStateSetStart(LauncherState state) {
+        if (state != NORMAL && mUnlockAnimationController != null) {
+            mUnlockAnimationController.finish();
+        }
+        super.onStateSetStart(state);
     }
 
     @Override
@@ -792,6 +804,7 @@ public class QuickstepLauncher extends Launcher implements RecentsViewContainer,
         NavigationMode mode = DisplayController.getNavigationMode(this);
 
         ArrayList<TouchController> list = new ArrayList<>();
+        if (mUnlockAnimationController != null) list.add(mUnlockAnimationController);
         list.add(getDragController());
         BiConsumer<AnimatorSet, Long> splitAnimator = (animatorSet, duration) ->
                 animatorSet.play(mSplitSelectStateController.getSplitAnimationController()
@@ -842,6 +855,12 @@ public class QuickstepLauncher extends Launcher implements RecentsViewContainer,
         com.android.launcher3.graphics.FrostedSurfaceDrawable.setBackdropFactory(
                 com.android.quickstep.util.LiveFrostedBackdrop::new);
         super.onCreate(savedInstanceState);
+        if (getDisplayId() == DEFAULT_DISPLAY) {
+            mUnlockAnimationController = new LauncherUnlockAnimationController(this);
+            SystemUiProxy.INSTANCE.get(this).setLauncherUnlockAnimationController(
+                    getComponentName().getClassName(), mUnlockAnimationController);
+            getDragLayer().recreateControllers();
+        }
         if (savedInstanceState != null) {
             mPendingSplitSelectInfo = ObjectWrapper.unwrap(
                     savedInstanceState.getIBinder(PENDING_SPLIT_SELECT_INFO));
@@ -966,6 +985,7 @@ public class QuickstepLauncher extends Launcher implements RecentsViewContainer,
 
     @Override
     protected void onPause() {
+        if (mUnlockAnimationController != null) mUnlockAnimationController.finish();
         if (mLauncherUnfoldAnimationController != null) {
             mLauncherUnfoldAnimationController.onPause();
         }

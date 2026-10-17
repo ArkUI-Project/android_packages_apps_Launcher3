@@ -1108,6 +1108,13 @@ class SystemUiProxy @Inject constructor(
         launcherUnlockAnimationController = controller
     }
 
+    fun clearLauncherUnlockAnimationController(controller: ILauncherUnlockAnimationController) {
+        // A destroyed activity must not unregister a replacement activity's controller.
+        if (launcherUnlockAnimationController === controller) {
+            setLauncherUnlockAnimationController(launcherActivityClass, null)
+        }
+    }
+
     /**
      * Tells System UI that the Launcher's smartspace state has been updated, so that it can prepare
      * the unlock animation accordingly.
