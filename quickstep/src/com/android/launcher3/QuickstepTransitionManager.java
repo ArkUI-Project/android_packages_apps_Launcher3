@@ -177,6 +177,7 @@ import com.android.quickstep.util.TaskRestartedDuringLaunchListener;
 import com.android.quickstep.util.WorkspaceRevealAnim;
 import com.android.quickstep.views.FloatingWidgetView;
 import com.android.quickstep.views.RecentsView;
+import com.android.quickstep.views.TaskView;
 import com.android.systemui.animation.ActivityTransitionAnimator;
 import com.android.systemui.animation.DelegateTransitionAnimatorController;
 import com.android.systemui.animation.LaunchableView;
@@ -393,8 +394,7 @@ public class QuickstepTransitionManager implements OnDeviceProfileChangeListener
         IRemoteTransition appLaunchRemoteTransition = createAppLaunchRemoteTransition(
                 appLaunchRunner);
 
-        // Note that this duration is a guess as we do not know if the animation will be a
-        // recents launch or not for sure until we know the opening app targets.
+        // Choose timing from the clicked source, before a pending home transition changes state.
         final DesktopAnimationSettings motion = DesktopAnimationSettings.read(mLauncher);
         long duration = fromRecents ? motion.recentsDuration
                 : v instanceof LauncherAppWidgetHostView ? APP_LAUNCH_DURATION : motion.openDuration;
@@ -484,10 +484,9 @@ public class QuickstepTransitionManager implements OnDeviceProfileChangeListener
     }
 
     /**
-     * Whether the launch is a recents app transition and we should do a launch animation
-     * from the recents view. Note that if the remote animation targets are not provided, this
-     * may not always be correct as we may resolve the opening app to a task when the animation
-     * starts.
+     * Whether the launch came from a task card or one of its child controls.
+     * An app icon can match a recent task while Home is still settling; that match does not
+     * make the card the launch source.
      *
      * @param v       the view to launch from
      * @param targets apps that are opening/closing
@@ -495,8 +494,13 @@ public class QuickstepTransitionManager implements OnDeviceProfileChangeListener
      */
     protected boolean isLaunchingFromRecents(@NonNull View v,
             @Nullable RemoteAnimationTarget[] targets) {
+        View source = v;
+        while (!(source instanceof TaskView)) {
+            if (!(source.getParent() instanceof View)) return false;
+            source = (View) source.getParent();
+        }
         return mLauncher.getStateManager().getState().isRecentsViewVisible
-                && findTaskViewToLaunch(mLauncher.getOverviewPanel(), v, targets) != null;
+                && findTaskViewToLaunch(mLauncher.getOverviewPanel(), source, targets) != null;
     }
 
     /**
@@ -2387,10 +2391,12 @@ public class QuickstepTransitionManager implements OnDeviceProfileChangeListener
 
         private final View mV;
         private final RunnableList mOnEndCallback;
+        private final boolean mLaunchingFromRecents;
 
         AppLaunchAnimationRunner(View v, RunnableList onEndCallback) {
             mV = v;
             mOnEndCallback = onEndCallback;
+            mLaunchingFromRecents = isLaunchingFromRecents(v, null /* targets */);
         }
 
         @Override
@@ -2404,7 +2410,10 @@ public class QuickstepTransitionManager implements OnDeviceProfileChangeListener
                     launcherIsATargetWithMode(appTargets, MODE_CLOSING);
 
             final boolean launchingFromWidget = mV instanceof LauncherAppWidgetHostView;
-            final boolean launchingFromRecents = isLaunchingFromRecents(mV, appTargets);
+            // Remote targets can arrive after another gesture has changed Launcher state.
+            // They may validate the clicked card, but must not turn an icon tap into a card launch.
+            final boolean launchingFromRecents = mLaunchingFromRecents
+                    && findTaskViewToLaunch(mLauncher.getOverviewPanel(), mV, appTargets) != null;
             final boolean skipFirstFrame;
             if (launchingFromWidget) {
                 composeWidgetLaunchAnimator(anim, (LauncherAppWidgetHostView) mV, appTargets,
