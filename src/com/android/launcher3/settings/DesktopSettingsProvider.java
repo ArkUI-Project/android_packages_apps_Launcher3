@@ -193,14 +193,14 @@ public class DesktopSettingsProvider extends ContentProvider {
         iconShapes.putStringArray("labels", shapeLabels);
         iconShapes.putStringArray("paths", shapePaths);
         iconShapes.putString("default", shapes.length == 0 ? "" : ShapesProvider.CIRCLE_KEY);
-        final int iconSize = Math.max(80, Math.min(120, preferences.getInt(ICON_SIZE, 115)));
+        final int iconSize = Math.max(80, Math.min(120, preferences.getInt(ICON_SIZE, 110)));
         values.putInt(ICON_SIZE, iconSize);
         available.putBoolean(ICON_SIZE, true);
         final Bundle sizeSpec = new Bundle();
         sizeSpec.putInt("min", 80);
         sizeSpec.putInt("max", 120);
         sizeSpec.putInt("step", 5);
-        sizeSpec.putInt("default", 115);
+        sizeSpec.putInt("default", 110);
         final InvariantDeviceProfile idp = InvariantDeviceProfile.INSTANCE.get(context);
         final List<InvariantDeviceProfile.GridOption> grids = idp.parseAllGridOptions(context);
         grids.sort(Comparator.comparingInt((InvariantDeviceProfile.GridOption grid) -> grid.numColumns)
