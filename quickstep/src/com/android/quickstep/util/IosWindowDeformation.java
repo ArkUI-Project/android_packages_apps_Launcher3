@@ -119,9 +119,20 @@ public final class IosWindowDeformation extends Drawable
         mClip.rewind();
         mClip.addRoundRect(crop.left, crop.top, crop.right, crop.bottom,
                 radius, radius, Path.Direction.CW);
-        mPaint.setAlpha(Math.round(255f * Utilities.boundToRange(alpha * mBlend, 0f, 1f)));
+        mPaint.setAlpha(Math.round(255f * getSnapshotAlpha(alpha, mBlend)));
         invalidateSelf();
         return mBlend;
+    }
+
+    static float getSnapshotAlpha(float alpha, float blend) {
+        alpha = Utilities.boundToRange(alpha, 0f, 1f);
+        blend = Utilities.boundToRange(blend, 0f, 1f);
+        float snapshotWeight = alpha * blend;
+        if (snapshotWeight == 0f) return 0f;
+        // The live app is above the Launcher overlay with alpha * (1 - blend). Compensate
+        // for that occlusion so their source-over composite retains the requested alpha.
+        // Complementary layer alphas alone expose 25% of the desktop halfway through a swap.
+        return snapshotWeight / (1f - alpha + snapshotWeight);
     }
 
     public void close() {
