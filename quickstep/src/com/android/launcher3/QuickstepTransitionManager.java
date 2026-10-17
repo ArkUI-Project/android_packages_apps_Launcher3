@@ -965,10 +965,18 @@ public class QuickstepTransitionManager implements OnDeviceProfileChangeListener
                 ? new WindowAnimationSnapshot(mDragLayer, target.leash, fullWindowCrop, motionState,
                         SystemBarFollowAnimation.getSurface(openingTargets, target))
                 : null;
-        final IosWindowDeformation deformation = motion.isIos && snapshot != null
+        // A replacement leash can still contain the previous transition's transformed children
+        // while Shell reparents the task. Keep that handoff live: capturing it again can bake the
+        // old crop and fitted status bar into a bitmap and flash them during the new launch.
+        final IosWindowDeformation deformation = motion.isIos && previous == null && snapshot != null
+                && !SystemBarFollowAnimation.startsPending(openingTargets, target)
                 && rotationChange == 0 && landscapeRotation == 0f
                 ? new IosWindowDeformation(mDragLayer, target.leash, fullWindowCrop,
                         motion.openDuration) : null;
+        motionState.setOnReplaced(() -> {
+            surfaceApplier.cancelPendingTransactions();
+            if (deformation != null) deformation.close();
+        });
         final Matrix windowToHome = new Matrix();
         windowToHome.setRotate(-90f * rotationChange);
         if (rotationChange == 1) {
@@ -2854,6 +2862,10 @@ public class QuickstepTransitionManager implements OnDeviceProfileChangeListener
                     ? new IosWindowDeformation(mDragLayer, closingTarget.leash,
                             new Rect(0, 0, mWindowOriginalBounds.width(),
                                     mWindowOriginalBounds.height()), motion.homeDuration) : null;
+            motionState.setOnReplaced(() -> {
+                mSurfaceApplier.cancelPendingTransactions();
+                if (mDeformation != null) mDeformation.close();
+            });
         }
 
         public float getCornerRadius(float progress) {
@@ -2973,12 +2985,14 @@ public class QuickstepTransitionManager implements OnDeviceProfileChangeListener
 
         @Override
         public void onAnimationCancel(Animator animation) {
+            mSurfaceApplier.cancelPendingTransactions();
             if (mDeformation != null) mDeformation.close();
             mMotionState.cancel();
         }
 
         @Override
         public void onCancel() {
+            mSurfaceApplier.cancelPendingTransactions();
             if (mDeformation != null) mDeformation.close();
             mMotionState.cancel();
             mLauncher.getDepthController().endAppTransition(this);

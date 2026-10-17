@@ -577,6 +577,12 @@ public abstract class SwipeUpAnimationLogic implements
                     && mBaseMatrixRotation == 0f
                     ? new IosWindowDeformation(host, targets.getFirstAppTarget().leash,
                             new Rect(mCropRect), mMotion.homeDuration) : null;
+            if (mMotionState != null) {
+                mMotionState.setOnReplaced(() -> {
+                    mLocalTransformParams.cancelPendingSurfaceTransactions();
+                    if (mDeformation != null) mDeformation.close();
+                });
+            }
         }
 
         private float updateHomeWindowGeometry(RectF currentRect, float progress) {
@@ -716,6 +722,7 @@ public abstract class SwipeUpAnimationLogic implements
 
         @Override
         public void onCancel() {
+            mLocalTransformParams.cancelPendingSurfaceTransactions();
             if (mMotionState != null) mMotionState.cancel();
             cleanUp();
             mAnimationFactory.onCancel();

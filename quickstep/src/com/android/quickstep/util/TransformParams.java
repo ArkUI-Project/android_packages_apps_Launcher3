@@ -249,6 +249,13 @@ public class TransformParams {
         }
     }
 
+    /** Discard frames queued by the previous owner before another animation moves the task. */
+    public void cancelPendingSurfaceTransactions() {
+        if (mSyncTransactionApplier != null) {
+            mSyncTransactionApplier.cancelPendingTransactions();
+        }
+    }
+
     @FunctionalInterface
     public interface BuilderProxy {
 

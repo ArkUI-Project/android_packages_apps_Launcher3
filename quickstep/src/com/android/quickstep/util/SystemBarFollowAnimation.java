@@ -48,6 +48,12 @@ public final class SystemBarFollowAnimation {
         return bar == null ? null : bar.leash;
     }
 
+    /** The container is fitted from the first frame while WM waits for the previous owner. */
+    public static boolean startsPending(RemoteAnimationTargets targets, RemoteAnimationTarget app) {
+        RemoteAnimationTarget bar = getTarget(targets, app);
+        return bar != null && bar.mode == RemoteAnimationTarget.MODE_OPENING;
+    }
+
     private static @Nullable RemoteAnimationTarget getTarget(RemoteAnimationTargets targets,
             RemoteAnimationTarget app) {
         if (targets == null || targets.nonApps == null || app == null) return null;

@@ -188,6 +188,7 @@ public final class AppWindowAnimationState {
         private boolean mCancelled;
         private boolean mInitialContinuationFrame;
         private @Nullable Runnable mStopContinuation;
+        private @Nullable Runnable mOnReplaced;
 
         Session(int taskId, DeviceProfile profile) {
             mTaskId = taskId;
@@ -215,6 +216,7 @@ public final class AppWindowAnimationState {
                 mInitialContinuationFrame = true;
             }
             if (taskId >= 0) sSessions.put(taskId, this);
+            if (old != null) old.retireVisuals();
             if (old != null && old.mStopContinuation != null) old.mStopContinuation.run();
             if (old != null && old.mGestureOwned) old.finishGesture();
         }
@@ -282,6 +284,13 @@ public final class AppWindowAnimationState {
 
         public void cancel() {
             mCancelled = true;
+            retireVisuals();
+        }
+
+        private void retireVisuals() {
+            Runnable onReplaced = mOnReplaced;
+            mOnReplaced = null;
+            if (onReplaced != null) onReplaced.run();
         }
 
         public boolean isActive() {
@@ -290,6 +299,15 @@ public final class AppWindowAnimationState {
         }
 
         public boolean isGestureOwned() { return mGestureOwned; }
+
+        /** Retire queued surface frames and overlays before a replacement draws its first frame. */
+        public void setOnReplaced(Runnable onReplaced) {
+            if (mCancelled || (mTaskId >= 0 && sSessions.get(mTaskId) != this)) {
+                onReplaced.run();
+            } else {
+                mOnReplaced = onReplaced;
+            }
+        }
 
         public void setGestureTargets(RemoteAnimationTargets targets, Runnable takeOver,
                 Runnable endGesture) {
@@ -322,6 +340,7 @@ public final class AppWindowAnimationState {
         }
 
         public void finish() {
+            mOnReplaced = null;
             mStopContinuation = null;
             mOnGestureTakeover = null;
             mEndGesture = null;
