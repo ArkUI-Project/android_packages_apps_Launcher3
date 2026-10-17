@@ -369,6 +369,7 @@ public class Launcher extends StatefulActivity<LauncherState>
     // Used to notify when an activity launch has been deferred because launcher is not yet resumed
     // TODO: See if we can remove this later
     private Runnable mOnDeferredActivityLaunchCallback;
+    @Nullable private PendingActivityLaunch mPendingActivityLaunch;
     private OnPreDrawListener mOnInitialBindListener;
 
     private LauncherModel mModel;
@@ -1735,6 +1736,7 @@ public class Launcher extends StatefulActivity<LauncherState>
 
     @Override
     public void onDestroy() {
+        cancelPendingActivityLaunch();
         if (mHomeEditController != null) mHomeEditController.destroy();
         super.onDestroy();
         ACTIVITY_TRACKER.onContextDestroyed(this);
@@ -2129,33 +2131,29 @@ public class Launcher extends StatefulActivity<LauncherState>
 
     @Override
     public RunnableList startActivitySafely(View v, Intent intent, ItemInfo item) {
+        cancelPendingActivityLaunch();
         if (!hasBeenResumed()) {
-            RunnableList result = new RunnableList();
             // Workaround an issue where the WM launch animation is clobbered when finishing the
             // recents animation into launcher. Defer launching the activity until Launcher is
-            // next resumed.
-            addEventCallback(EVENT_RESUMED, () -> {
-                RunnableList actualResult = startActivitySafely(v, intent, item);
-                if (actualResult != null) {
-                    actualResult.add(result::executeAllAndDestroy);
-                } else {
-                    result.executeAllAndDestroy();
-                }
-            });
+            // next resumed. Only the latest tap should survive that wait.
+            PendingActivityLaunch launch = new PendingActivityLaunch(v, intent, item);
+            mPendingActivityLaunch = launch;
+            addEventCallback(EVENT_RESUMED, launch);
             if (mOnDeferredActivityLaunchCallback != null) {
-                mOnDeferredActivityLaunchCallback.run();
+                Runnable callback = mOnDeferredActivityLaunchCallback;
                 mOnDeferredActivityLaunchCallback = null;
+                callback.run();
             }
-            return result;
+            return launch.mOnEndCallback;
         }
 
         if (shouldShowHomeBehindDesktop() && isInState(ALL_APPS)) {
             // On desktop form factor, first wait for the all apps page to close and then launch
             // the activity.
-            getStateManager().goToState(NORMAL, forEndCallback(() -> {
-                startActivitySafely(v, intent, item);
-            }));
-            return null;
+            PendingActivityLaunch launch = new PendingActivityLaunch(v, intent, item);
+            mPendingActivityLaunch = launch;
+            getStateManager().goToState(NORMAL, forEndCallback(launch));
+            return launch.mOnEndCallback;
         }
 
         RunnableList result = super.startActivitySafely(v, intent, item);
@@ -2179,6 +2177,42 @@ public class Launcher extends StatefulActivity<LauncherState>
             result.add(() -> btv.setStayPressed(false));
         }
         return result;
+    }
+
+    private void cancelPendingActivityLaunch() {
+        PendingActivityLaunch launch = mPendingActivityLaunch;
+        mPendingActivityLaunch = null;
+        if (launch != null) {
+            removeEventCallback(EVENT_RESUMED, launch);
+            launch.mOnEndCallback.executeAllAndDestroy();
+        }
+    }
+
+    private final class PendingActivityLaunch implements Runnable {
+        private final View mView;
+        private final Intent mIntent;
+        private final ItemInfo mItem;
+        private final RunnableList mOnEndCallback = new RunnableList();
+
+        PendingActivityLaunch(View view, Intent intent, ItemInfo item) {
+            mView = view;
+            mIntent = new Intent(intent);
+            mItem = item;
+        }
+
+        @Override
+        public void run() {
+            // Resume/state callbacks may already be dispatching when another icon is tapped.
+            if (mPendingActivityLaunch != this) return;
+            mPendingActivityLaunch = null;
+            removeEventCallback(EVENT_RESUMED, this);
+            RunnableList result = startActivitySafely(mView, mIntent, mItem);
+            if (result == null) {
+                mOnEndCallback.executeAllAndDestroy();
+            } else {
+                result.add(mOnEndCallback::executeAllAndDestroy);
+            }
+        }
     }
 
     public void startActivitySafelyAuth(View v, Intent intent, ItemInfo item) {

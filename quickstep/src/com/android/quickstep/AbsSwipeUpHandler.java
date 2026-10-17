@@ -1339,9 +1339,8 @@ public abstract class AbsSwipeUpHandler<
         if (mRecentsView != null) {
             mRecentsView.setRecentsAnimationTargets(null, null);
         }
-        if (!mGestureState.useSyntheticRecentsTransition()) {
-            maybeHandleUnfinishedTaskLaunch("onRecentsAnimationCanceled");
-        }
+        // Cancellation transfers control to the interrupting transition. Replaying this
+        // gesture's task launch here can bring an old task above the newly launched app.
     }
 
     @UiThread
@@ -2064,17 +2063,20 @@ public abstract class AbsSwipeUpHandler<
         @Override
         public void onActivityRestartAttempt(ActivityManager.RunningTaskInfo task,
                 boolean homeTaskVisible, boolean clearedTask, boolean wasVisible) {
-            if (mSmallWindowCommitted) return;
+            if (mSmallWindowCommitted || mCanceled || mRecentsAnimationController == null
+                    || mStateCallback.hasStates(STATE_HANDLER_INVALIDATED)
+                    || task.displayId != mGestureState.getDisplayId()) return;
             boolean taskRunningAndNotHome = Arrays.stream(mGestureState
                             .getRunningTaskIds(true /*getMultipleTasks*/))
                     .anyMatch(taskId -> task.taskId == taskId
                             && task.configuration.windowConfiguration.getActivityType()
                             != ACTIVITY_TYPE_HOME);
             if (taskRunningAndNotHome) {
-                if (homeTaskVisible && mGestureState.getEndTarget() == HOME
+                if (mGestureState.getEndTarget() == HOME
                         && !mIsSwipingPipToHome) {
                     // The icon tap already carries its launch animation. A second launch with
                     // null options discards that handoff and exposes the task at fullscreen.
+                    // Home can already be hidden by the time the restart notification arrives.
                     TaskStackChangeListeners.getInstance().unregisterTaskStackListener(
                             mActivityRestartListener);
                     finishHomeAnimationAtCurrentPosition();
@@ -3203,8 +3205,7 @@ public abstract class AbsSwipeUpHandler<
     }
 
     protected void startNewTask(@Nullable TaskView taskToLaunch, Consumer<Boolean> resultCallback) {
-        if (mCanceled) {
-            mCanceled = false;
+        if (mCanceled || mStateCallback.hasStates(STATE_HANDLER_INVALIDATED)) {
             return;
         }
         if (taskToLaunch == null) {
@@ -3217,7 +3218,6 @@ public abstract class AbsSwipeUpHandler<
                         /* reason= */ new ActiveGestureLog.CompoundString(
                                 "AbsSwipeUpHander.startNewTask: missing task to launch"));
             }
-            mCanceled = false;
             return;
         }
         int[] taskIds = taskToLaunch.getTaskIds();
@@ -3237,6 +3237,9 @@ public abstract class AbsSwipeUpHandler<
         }
         ActiveGestureProtoLogProxy.logStartNewTask(nextTaskLog);
         taskToLaunch.launchWithoutAnimation(true, success -> {
+            if (mCanceled || mStateCallback.hasStates(STATE_HANDLER_INVALIDATED)) {
+                return Unit.INSTANCE;
+            }
             resultCallback.accept(success);
             if (success) {
                 if (hasTaskPreviouslyAppeared) {
@@ -3255,7 +3258,6 @@ public abstract class AbsSwipeUpHandler<
             }
             return Unit.INSTANCE;
         }  /* freezeTaskList */);
-        mCanceled = false;
     }
 
     /**
@@ -3321,11 +3323,7 @@ public abstract class AbsSwipeUpHandler<
             RemoteAnimationTarget appearedTaskTarget = appearedTaskTargets[0];
             TaskInfo taskInfo = appearedTaskTarget.taskInfo;
             onInvalidTasksAppeared(
-                    () -> {
-                        onFinishComplete.run();
-                        maybeHandleUnfinishedTaskLaunch(
-                                "onTasksAppeared: unexpected task appeared mid-gesture");
-                    },
+                    onFinishComplete,
                     new ActiveGestureLog.CompoundString(
                             "Unexpected task appeared id=%d, pkg=%s",
                             taskInfo.taskId,
@@ -3349,10 +3347,7 @@ public abstract class AbsSwipeUpHandler<
             forceFinishReason.append("Unexpected task appeared id=%d, pkg=%s",
                     taskInfo.taskId,
                     taskInfo.baseIntent.getComponent().getPackageName());
-            onInvalidTasksAppeared(() -> {
-                onFinishComplete.run();
-                maybeHandleUnfinishedTaskLaunch("onTasksAppeared: unexpected task appeared");
-            }, forceFinishReason);
+            onInvalidTasksAppeared(onFinishComplete, forceFinishReason);
             return;
         }
         reset();
@@ -3379,24 +3374,6 @@ public abstract class AbsSwipeUpHandler<
             return;
         }
         animateSplashScreenExit(mContainer, appearedTaskTargets, taskTargets);
-    }
-
-    private void maybeHandleUnfinishedTaskLaunch(@NonNull String reason) {
-        GestureEndTarget endTarget = mGestureState.getEndTarget();
-        // Edge cases where a gesture that would have launched/resumed a task was interrupted.
-        // These are just fallback cases to prevent leaving the user in a broken state.
-        ActiveGestureLog.CompoundString msg = new ActiveGestureLog.CompoundString(reason);
-        if (endTarget == NEW_TASK || endTarget == LAST_TASK) {
-            if (endTarget == NEW_TASK && mRecentsView != null) {
-                int nextTaskIndex = mRecentsView.getCurrentPage() + 1;
-                msg.append(". Attempting to start new task at index %d.", nextTaskIndex);
-                startNewTask(mRecentsView.getTaskViewAt(nextTaskIndex));
-            } else if (endTarget == LAST_TASK) {
-                msg.append(". Attempting to resume last task.");
-                resumeLastTask();
-            }
-            ActiveGestureProtoLogProxy.logHandleUnfinishedTaskLaunch(endTarget.toString(), msg);
-        }
     }
 
     private void animateSplashScreenExit(

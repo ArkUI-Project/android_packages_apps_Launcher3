@@ -269,6 +269,7 @@ public class QuickstepLauncher extends Launcher implements RecentsViewContainer,
     private DepthController mDepthController;
     private QuickstepTransitionManager mAppTransitionManager;
     private LauncherUnlockAnimationController mUnlockAnimationController;
+    private long mActivityLaunchId;
 
     private OverviewActionsView<?> mActionsView;
     private TISBindHelper mTISBindHelper;
@@ -461,16 +462,23 @@ public class QuickstepLauncher extends Launcher implements RecentsViewContainer,
 
     @Override
     public RunnableList startActivitySafely(View v, Intent intent, ItemInfo item) {
+        final long launchId = ++mActivityLaunchId;
         if (mUnlockAnimationController != null) mUnlockAnimationController.finish();
         PredictionRowView<?> predictionRowView =
                 getAppsView().getFloatingHeaderView().findFixedRowByType(PredictionRowView.class);
         // Pause the prediction row updates until the transition (if it exists) ends.
         predictionRowView.setPredictionUiUpdatePaused(true);
         RunnableList result = super.startActivitySafely(v, intent, item);
+        Runnable onLaunchEnd = () -> {
+            // Superseded requests can finish while the latest icon launch is still pending.
+            if (mActivityLaunchId == launchId) {
+                predictionRowView.setPredictionUiUpdatePaused(false);
+            }
+        };
         if (result == null) {
-            predictionRowView.setPredictionUiUpdatePaused(false);
+            onLaunchEnd.run();
         } else {
-            result.add(() -> predictionRowView.setPredictionUiUpdatePaused(false));
+            result.add(onLaunchEnd);
         }
         return result;
     }
