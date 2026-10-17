@@ -27,6 +27,8 @@ import androidx.annotation.NonNull;
 
 import com.android.quickstep.RemoteAnimationTargets.ReleaseCheck;
 
+import java.util.concurrent.ConcurrentHashMap;
+
 /**
  * Helper class to apply surface transactions in sync with RenderThread similar to
  *   android.view.SyncRtSurfaceTransactionApplier
@@ -43,7 +45,10 @@ public class SurfaceTransactionApplier extends ReleaseCheck {
     private ViewRootImpl mTargetViewRootImpl;
 
     private int mLastSequenceNumber = 0;
+    private int mLastAppliedSequenceNumber = 0;
     private volatile int mTransactionGeneration;
+    private final ConcurrentHashMap<Integer, Transaction> mPendingTransactions =
+            new ConcurrentHashMap<>();
 
     /**
      * @param targetView The view in the surface that acts as synchronization anchor.
@@ -80,7 +85,8 @@ public class SurfaceTransactionApplier extends ReleaseCheck {
 
     protected boolean onApplyMessage(Message msg) {
         if (msg.what == MSG_UPDATE_SEQUENCE_NUMBER) {
-            setCanRelease(msg.arg1 == mLastSequenceNumber);
+            mLastAppliedSequenceNumber = Math.max(mLastAppliedSequenceNumber, msg.arg1);
+            setCanRelease(mLastAppliedSequenceNumber == mLastSequenceNumber);
             return true;
         }
         return false;
@@ -89,6 +95,13 @@ public class SurfaceTransactionApplier extends ReleaseCheck {
     /** Discard queued frames when another animator takes ownership of the same surfaces. */
     public void cancelPendingTransactions() {
         mTransactionGeneration++;
+        // A hidden/detached Launcher may never draw the frame that would discard these.
+        // Claim each queued transaction before closing it; RenderThread may already own one.
+        mPendingTransactions.forEach((sequence, transaction) -> {
+            if (mPendingTransactions.remove(sequence, transaction)) transaction.close();
+        });
+        mLastAppliedSequenceNumber = mLastSequenceNumber;
+        setCanRelease(true);
     }
 
     /**
@@ -98,40 +111,53 @@ public class SurfaceTransactionApplier extends ReleaseCheck {
      *               this method to avoid synchronization issues.
      */
     public void scheduleApply(SurfaceTransaction params) {
+        scheduleApply(params, true);
+    }
+
+    /** The caller is already drawing this frame; do not request another one from that draw. */
+    public void scheduleApplyOnDraw(SurfaceTransaction params) {
+        scheduleApply(params, false);
+    }
+
+    private void scheduleApply(SurfaceTransaction params, boolean requestFrame) {
+        Transaction t = params.getTransaction();
         if (!mInitialized) {
-            params.getTransaction().apply();
+            try (t) {
+                t.apply();
+            }
             return;
         }
         View view = mTargetViewRootImpl.getView();
         if (view == null) {
+            t.close();
             return;
         }
-        Transaction t = params.getTransaction();
 
         mLastSequenceNumber++;
         final int toApplySeqNo = mLastSequenceNumber;
         final int generation = mTransactionGeneration;
         setCanRelease(false);
+        mPendingTransactions.put(toApplySeqNo, t);
         mTargetViewRootImpl.registerRtFrameCallback(frame -> {
-            if (generation != mTransactionGeneration) {
-                t.close();
+            Transaction pending = mPendingTransactions.remove(toApplySeqNo);
+            try {
+                if (pending == null) return;
+                try (pending) {
+                    if (generation != mTransactionGeneration) return;
+                    if (mBarrierSurfaceControl == null || !mBarrierSurfaceControl.isValid()) {
+                        // Won't sync with anything, but we still need to apply the transaction.
+                        pending.apply();
+                    } else {
+                        mTargetViewRootImpl.mergeWithNextTransaction(pending, frame);
+                    }
+                }
+            } finally {
                 Message.obtain(mApplyHandler, MSG_UPDATE_SEQUENCE_NUMBER, toApplySeqNo, 0)
                         .sendToTarget();
-                return;
             }
-            if (mBarrierSurfaceControl == null || !mBarrierSurfaceControl.isValid()) {
-                // Won't sync with anything, but we still need to apply the transaction
-                t.apply();
-                Message.obtain(mApplyHandler, MSG_UPDATE_SEQUENCE_NUMBER, toApplySeqNo, 0)
-                        .sendToTarget();
-                return;
-            }
-            mTargetViewRootImpl.mergeWithNextTransaction(t, frame);
-            Message.obtain(mApplyHandler, MSG_UPDATE_SEQUENCE_NUMBER, toApplySeqNo, 0)
-                    .sendToTarget();
         });
 
         // Make sure a frame gets scheduled.
-        view.invalidate();
+        if (requestFrame) view.invalidate();
     }
 }

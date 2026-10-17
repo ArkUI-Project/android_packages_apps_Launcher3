@@ -1162,7 +1162,7 @@ public abstract class RecentsView<
             super.dispatchDraw(canvas);
         }
         if (mEnableDrawingLiveTile && mRemoteTargetHandles != null) {
-            redrawLiveTile();
+            redrawLiveTile(false /* requestFrame */);
         }
     }
 
@@ -1351,6 +1351,7 @@ public abstract class RecentsView<
         updateTaskStackListenerState();
         mModel.getThumbnailCache().getHighResLoadingState().removeCallback(this);
         TaskStackChangeListeners.getInstance().unregisterTaskStackListener(mTaskStackListener);
+        if (mSyncTransactionApplier != null) mSyncTransactionApplier.cancelPendingTransactions();
         mSyncTransactionApplier = null;
         runActionOnRemoteHandles(remoteTargetHandle -> remoteTargetHandle.getTransformParams()
                 .setSyncTransactionApplier(null));
@@ -6475,10 +6476,15 @@ public abstract class RecentsView<
     }
 
     public void redrawLiveTile() {
+        redrawLiveTile(true /* requestFrame */);
+    }
+
+    private void redrawLiveTile(boolean requestFrame) {
         runActionOnRemoteHandles(remoteTargetHandle -> {
             TransformParams params = remoteTargetHandle.getTransformParams();
             if (params.getTargetSet() != null) {
-                remoteTargetHandle.getTaskViewSimulator().apply(params);
+                if (requestFrame) remoteTargetHandle.getTaskViewSimulator().apply(params);
+                else remoteTargetHandle.getTaskViewSimulator().applyOnDraw(params);
             }
         });
     }
@@ -6494,9 +6500,13 @@ public abstract class RecentsView<
                 + "- recentsAnimationController: " + recentsAnimationController
                 + ", recentsAnimationTargets: " + recentsAnimationTargets);
         mRecentsAnimationController = recentsAnimationController;
-        mSplitSelectStateController.setRecentsAnimationRunning(true);
+        mSplitSelectStateController.setRecentsAnimationRunning(recentsAnimationController != null);
         if (recentsAnimationTargets == null || recentsAnimationTargets.apps.length == 0) {
+            cleanupRemoteTargets();
             return;
+        }
+        if (mRemoteTargetHandles != null && mSyncTransactionApplier != null) {
+            mSyncTransactionApplier.cancelPendingTransactions();
         }
 
         boolean forDesktop;
@@ -7235,6 +7245,8 @@ public abstract class RecentsView<
     public void cleanupRemoteTargets() {
         Log.d(TAG, "cleanupRemoteTargets - mRemoteTargetHandles: " + Arrays.toString(
                 mRemoteTargetHandles));
+        setEnableDrawingLiveTile(false);
+        if (mSyncTransactionApplier != null) mSyncTransactionApplier.cancelPendingTransactions();
         mRemoteTargetHandles = null;
     }
 

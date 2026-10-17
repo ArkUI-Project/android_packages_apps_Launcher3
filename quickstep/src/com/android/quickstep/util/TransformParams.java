@@ -249,6 +249,17 @@ public class TransformParams {
         }
     }
 
+    /** Commit the live tile from its current draw without starting an idle redraw loop. */
+    public void applySurfaceParamsOnDraw(SurfaceTransaction builder) {
+        if (mSyncTransactionApplier != null) {
+            mSyncTransactionApplier.scheduleApplyOnDraw(builder);
+        } else {
+            try (SurfaceControl.Transaction transaction = builder.getTransaction()) {
+                transaction.apply();
+            }
+        }
+    }
+
     /** Discard frames queued by the previous owner before another animation moves the task. */
     public void cancelPendingSurfaceTransactions() {
         if (mSyncTransactionApplier != null) {

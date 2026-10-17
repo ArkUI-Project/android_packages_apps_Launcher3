@@ -635,6 +635,11 @@ public class TaskViewSimulator implements TransformParams.BuilderProxy {
         apply(params, null, true);
     }
 
+    /** Synchronize a live tile to the frame currently being drawn, without invalidating it. */
+    public void applyOnDraw(TransformParams params) {
+        apply(params, null, false, null, true);
+    }
+
     /** Build the first gesture frame without exposing a new leash before Shell's atomic start. */
     public void applyToTransaction(TransformParams params, SurfaceControl.Transaction transaction) {
         apply(params, null, false, transaction);
@@ -647,6 +652,12 @@ public class TaskViewSimulator implements TransformParams.BuilderProxy {
 
     private void apply(TransformParams params, @Nullable SurfaceTransaction surfaceTransaction,
             boolean applyImmediately, @Nullable SurfaceControl.Transaction firstFrame) {
+        apply(params, surfaceTransaction, applyImmediately, firstFrame, false);
+    }
+
+    private void apply(TransformParams params, @Nullable SurfaceTransaction surfaceTransaction,
+            boolean applyImmediately, @Nullable SurfaceControl.Transaction firstFrame,
+            boolean duringDraw) {
         if (mDp == null || mThumbnailPosition.isEmpty()) {
             return;
         }
@@ -873,6 +884,8 @@ public class TaskViewSimulator implements TransformParams.BuilderProxy {
             transaction.getTransaction().close();
         } else if (applyImmediately) {
             transaction.getTransaction().apply();
+        } else if (duringDraw) {
+            params.applySurfaceParamsOnDraw(transaction);
         } else {
             params.applySurfaceParams(transaction);
         }
