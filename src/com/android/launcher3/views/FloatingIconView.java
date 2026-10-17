@@ -30,8 +30,10 @@ import static com.android.launcher3.views.FloatingIconViewCompanion.setPropertie
 import android.animation.Animator;
 import android.content.Context;
 import android.graphics.Canvas;
+import android.graphics.ColorFilter;
 import android.graphics.Matrix;
 import android.graphics.Path;
+import android.graphics.PixelFormat;
 import android.graphics.Rect;
 import android.graphics.RectF;
 import android.graphics.drawable.AdaptiveIconDrawable;
@@ -97,6 +99,11 @@ public class FloatingIconView extends FrameLayout implements
 
     private boolean mIsOpening;
     private boolean mIsAnimationContinuing;
+    private @Nullable View mContinuationHost;
+    private final Matrix mContinuationTransform = new Matrix();
+    private @Nullable ViewGroup mLandingHost;
+    private @Nullable Drawable mLandingDrawable;
+    private final Matrix mLandingTransform = new Matrix();
 
     private IconLoadResult mIconLoadResult;
 
@@ -181,6 +188,9 @@ public class FloatingIconView extends FrameLayout implements
      */
     public void update(float alpha, RectF rect, float progress, float shapeProgressStart,
             float cornerRadius, boolean isOpening, int taskViewDrawAlpha) {
+        if (!isOpening && alpha >= 1f && taskViewDrawAlpha == 0 && mLandingDrawable == null) {
+            attachToLandingLayer();
+        }
         // The non-running task home animation has some very funky first few frames because this
         // FIV hasn't fully laid out. During those frames, hide this FIV and continue drawing the
         // TaskView directly while transforming it in the place of this FIV. However, if we fade
@@ -188,6 +198,7 @@ public class FloatingIconView extends FrameLayout implements
         setAlpha(isLaidOut() || taskViewDrawAlpha < 255 ? alpha : 0f);
         mClipIconView.update(rect, progress, shapeProgressStart, cornerRadius, isOpening, this,
                 mLauncher.getDeviceProfile(), taskViewDrawAlpha, mUseIosReturnGeometry);
+        invalidateAnimationLayer();
 
         // The alpha goes from 1 to 0 when progress is 0 and 0.15 respectively.
         // This value minimizes view display time while still allowing the view to fade out.
@@ -208,6 +219,7 @@ public class FloatingIconView extends FrameLayout implements
         setTranslationX(getTranslationX() + pivotX * (getScaleX() - 1f));
         setTranslationY(getTranslationY() + pivotY * (getScaleY() - 1f));
         setRotation(degrees);
+        invalidateAnimationLayer();
     }
 
     /** Keep the icon's content and outline on the same perspective plane as the app card. */
@@ -216,6 +228,7 @@ public class FloatingIconView extends FrameLayout implements
                 bounds.height() / Math.max(.001f, getScaleY()));
         mIosDeformation.set(mIosShape.matrix(mIosBounds, amount, mIsOpening));
         invalidate();
+        invalidateAnimationLayer();
     }
 
     /**
@@ -432,6 +445,7 @@ public class FloatingIconView extends FrameLayout implements
 
         setOriginalDrawableBackground(btvIcon);
         invalidate();
+        invalidateAnimationLayer();
     }
 
     /**
@@ -516,6 +530,73 @@ public class FloatingIconView extends FrameLayout implements
     }
 
     @Override
+    public void draw(Canvas canvas) {
+        // The view stays attached for layout and icon loading. Its pixels belong to its app's
+        // continuation, or to the original workspace page once only the icon remains.
+        if (mContinuationHost == null && mLandingDrawable == null) super.draw(canvas);
+    }
+
+    public void drawAnimationContinuation(Canvas canvas) {
+        if (!mIsAnimationContinuing || mContinuationHost == null || mLandingDrawable != null) return;
+        int save = canvas.save();
+        canvas.concat(mContinuationTransform);
+        drawInParent(canvas);
+        canvas.restoreToCount(save);
+    }
+
+    private void drawInParent(Canvas canvas) {
+        if (getVisibility() != VISIBLE || getAlpha() <= 0f) return;
+        int save = canvas.save();
+        canvas.translate(getLeft(), getTop());
+        canvas.concat(getMatrix());
+        if (getAlpha() < 1f) {
+            canvas.saveLayerAlpha(0f, 0f, getWidth(), getHeight(),
+                    Math.round(255f * getAlpha()));
+        }
+        super.draw(canvas);
+        canvas.restoreToCount(save);
+    }
+
+    private boolean mapParentTo(View target, Matrix result) {
+        if (!(getParent() instanceof View parent)) return false;
+        Matrix sourceToScreen = new Matrix();
+        Matrix targetToScreen = new Matrix();
+        parent.transformMatrixToGlobal(sourceToScreen);
+        target.transformMatrixToGlobal(targetToScreen);
+        if (!targetToScreen.invert(result)) return false;
+        result.preConcat(sourceToScreen);
+        return true;
+    }
+
+    private void attachToLandingLayer() {
+        if (mOriginalIcon == null || !mOriginalIcon.isAttachedToWindow()
+                || !(mOriginalIcon.getParent() instanceof ViewGroup host)
+                || !mapParentTo(host, mLandingTransform)) return;
+        // Freeze the animation's destination in this page's coordinates. Paging and workspace
+        // reveal transforms now carry the landed icon directly instead of chasing a moving target.
+        mLandingHost = host;
+        mLandingDrawable = new Drawable() {
+            @Override public void draw(Canvas canvas) {
+                int save = canvas.save();
+                canvas.concat(mLandingTransform);
+                drawInParent(canvas);
+                canvas.restoreToCount(save);
+            }
+            @Override public void setAlpha(int alpha) { }
+            @Override public void setColorFilter(@Nullable ColorFilter filter) { }
+            @Override public int getOpacity() { return PixelFormat.TRANSLUCENT; }
+        };
+        mLandingDrawable.setBounds(0, 0, host.getWidth(), host.getHeight());
+        host.getOverlay().add(mLandingDrawable);
+        invalidate();
+    }
+
+    private void invalidateAnimationLayer() {
+        if (mLandingDrawable != null) mLandingDrawable.invalidateSelf();
+        if (mContinuationHost != null) mContinuationHost.invalidate();
+    }
+
+    @Override
     protected void dispatchDraw(Canvas canvas) {
         int save = canvas.save();
         canvas.concat(mIosDeformation);
@@ -534,8 +615,10 @@ public class FloatingIconView extends FrameLayout implements
     }
 
     /** Keep the closing icon alive after its remote window has been released. */
-    public void startAnimationContinuation() {
+    public void startAnimationContinuation(View host) {
         mIsAnimationContinuing = true;
+        if (mapParentTo(host, mContinuationTransform)) mContinuationHost = host;
+        invalidate();
         mFastFinishRunnable = null;
         mOnTargetChangeRunnable = null;
         // The visual tail must not participate in the next launch's floating-view cleanup.
@@ -608,6 +691,7 @@ public class FloatingIconView extends FrameLayout implements
 
     @Override
     public void onGlobalLayout() {
+        if (mLandingDrawable != null) return;
         if (mOriginalIcon != null && mOriginalIcon.isAttachedToWindow() && mPositionOut != null) {
             getLocationBoundsForView(mLauncher, mOriginalIcon, mIsOpening, sTmpRectF,
                     mTargetIconBounds);
@@ -779,6 +863,14 @@ public class FloatingIconView extends FrameLayout implements
     }
 
     private void recycle() {
+        if (mLandingHost != null && mLandingDrawable != null) {
+            mLandingHost.getOverlay().remove(mLandingDrawable);
+        }
+        mLandingHost = null;
+        mLandingDrawable = null;
+        mLandingTransform.reset();
+        mContinuationHost = null;
+        mContinuationTransform.reset();
         mIosDeformation.reset();
         mUseIosReturnGeometry = false;
         setRotation(0);

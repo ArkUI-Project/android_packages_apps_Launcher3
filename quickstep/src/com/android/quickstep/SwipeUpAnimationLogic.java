@@ -240,7 +240,7 @@ public abstract class SwipeUpAnimationLogic implements
 
         public void onCancel() { }
 
-        public void onAnimationContinuationStart() { }
+        public void onAnimationContinuationStart(WindowAnimationSnapshot continuation) { }
 
         public void onAnimationContinuationEnd() { }
 
@@ -565,7 +565,7 @@ public abstract class SwipeUpAnimationLogic implements
                 windowAnimation.setOnCancelContinuation(() -> {
                     mSnapshot.continueAnimation(windowAnimation, this::updateSnapshot);
                     if (mSnapshot.isContinuing()) {
-                        mAnimationFactory.onAnimationContinuationStart();
+                        mAnimationFactory.onAnimationContinuationStart(mSnapshot);
                         mSnapshot.setOnCloseListener(
                                 mAnimationFactory::onAnimationContinuationEnd);
                     }

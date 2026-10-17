@@ -57,6 +57,7 @@ import com.android.quickstep.util.LandscapeAppAnimation;
 import com.android.quickstep.util.RectFSpringAnim;
 import com.android.quickstep.util.ScalingWorkspaceRevealAnim;
 import com.android.quickstep.util.TaskViewSimulator;
+import com.android.quickstep.util.WindowAnimationSnapshot;
 import com.android.quickstep.views.FloatingWidgetView;
 import com.android.quickstep.views.RecentsView;
 import com.android.quickstep.views.TaskView;
@@ -206,8 +207,8 @@ public class LauncherSwipeHandlerV2 extends AbsSwipeUpHandler<
             }
 
             @Override
-            public void onAnimationContinuationStart() {
-                floatingIconView.startAnimationContinuation();
+            public void onAnimationContinuationStart(WindowAnimationSnapshot continuation) {
+                continuation.attachIcon(floatingIconView);
             }
 
             @Override

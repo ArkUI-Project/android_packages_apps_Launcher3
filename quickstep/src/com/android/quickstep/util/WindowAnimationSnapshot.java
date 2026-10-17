@@ -26,6 +26,8 @@ import android.window.ScreenCaptureInternal;
 
 import androidx.annotation.Nullable;
 
+import com.android.launcher3.views.FloatingIconView;
+
 import java.util.ArrayList;
 import java.util.function.ObjIntConsumer;
 
@@ -51,6 +53,7 @@ public final class WindowAnimationSnapshot extends Drawable
     private AppWindowAnimationState.Session mSession;
     private @Nullable Bitmap mBitmap;
     private @Nullable ValueAnimator mAnimator;
+    private @Nullable FloatingIconView mIcon;
     private long mContinuationTime;
     private long mContinuationPlayTime;
     // Native capture keeps a weak reference to the consumer; retain it until the reply.
@@ -212,6 +215,14 @@ public final class WindowAnimationSnapshot extends Drawable
         return !mClosed && mAnimator != null;
     }
 
+    /** Keep the icon and its app below newer window snapshots in the same draw order. */
+    public void attachIcon(FloatingIconView icon) {
+        if (!isContinuing()) return;
+        mIcon = icon;
+        icon.startAnimationContinuation(mHost);
+        invalidateSelf();
+    }
+
     /** Release any icon paired with this tail on completion, replacement, or capture failure. */
     public void setOnCloseListener(Runnable listener) {
         if (mClosed) listener.run();
@@ -238,6 +249,7 @@ public final class WindowAnimationSnapshot extends Drawable
         // Dropping the hardware bitmap releases our reference without recycling a buffer
         // which RenderThread may still be reading from the preceding frame.
         mBitmap = null;
+        mIcon = null;
         final Runnable onClose = mOnCloseListener;
         mOnCloseListener = null;
         if (onClose != null) onClose.run();
@@ -245,12 +257,15 @@ public final class WindowAnimationSnapshot extends Drawable
 
     @Override
     public void draw(Canvas canvas) {
-        if (mBitmap == null || !isContinuing()) return;
-        int save = canvas.save();
-        canvas.concat(mMatrix);
-        canvas.clipPath(mClip);
-        canvas.drawBitmap(mBitmap, null, mDrawBounds, mPaint);
-        canvas.restoreToCount(save);
+        if (!isContinuing()) return;
+        if (mBitmap != null) {
+            int save = canvas.save();
+            canvas.concat(mMatrix);
+            canvas.clipPath(mClip);
+            canvas.drawBitmap(mBitmap, null, mDrawBounds, mPaint);
+            canvas.restoreToCount(save);
+        }
+        if (mIcon != null) mIcon.drawAnimationContinuation(canvas);
     }
 
     @Override
