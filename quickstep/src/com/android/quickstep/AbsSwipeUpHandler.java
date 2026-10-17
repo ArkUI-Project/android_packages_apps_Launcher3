@@ -910,26 +910,7 @@ public abstract class AbsSwipeUpHandler<
             return;
         }
 
-        // looking at single target is fine here since either app of a split pair would
-        // have their "isInRecents" field set? (that's what this is used for below)
-        RemoteAnimationTarget runningTaskTarget = mRecentsAnimationTargets != null
-                ? mRecentsAnimationTargets
-                .findTask(mGestureState.getTopRunningTaskId())
-                : null;
-        final boolean recentsAttachedToAppWindow;
-        if (mGestureState.getEndTarget() != null) {
-            recentsAttachedToAppWindow = mGestureState.getEndTarget().recentsAttachedToAppWindow;
-        } else if (mContinuingLastGesture
-                && mRecentsView.getRunningTaskIndex() != mRecentsView.getNextPage()) {
-            recentsAttachedToAppWindow = true;
-        } else if (runningTaskTarget != null && isNotInRecents(runningTaskTarget)) {
-            // The window is going away so make sure recents is always visible in this case.
-            recentsAttachedToAppWindow = true;
-        } else {
-            // Preparing the small-window drag is not an overview gesture. Keep sibling
-            // cards hidden until the user pauses or starts a horizontal quick switch.
-            recentsAttachedToAppWindow = mHasMotionEverBeenPaused || mIsLikelyToStartNewTask;
-        }
+        final boolean recentsAttachedToAppWindow = shouldAttachRecentsToAppWindow();
 
         if (!isGestureMode) {
             mAnimationFactory.setRecentsAttachedToAppWindow(
@@ -964,6 +945,27 @@ public abstract class AbsSwipeUpHandler<
         } else {
             applyScrollAndTransform();
         }
+    }
+
+    private boolean shouldAttachRecentsToAppWindow() {
+        GestureEndTarget endTarget = mGestureState.getEndTarget();
+        if (endTarget != null && endTarget != LAST_TASK) {
+            return endTarget.recentsAttachedToAppWindow;
+        }
+        // Resuming the current app should retain the gesture's visibility decision, not
+        // introduce sibling cards at finger-up after an otherwise hidden vertical swipe.
+        if (mContinuingLastGesture && mRecentsView != null
+                && mRecentsView.getRunningTaskIndex() != mRecentsView.getNextPage()) {
+            return true;
+        }
+        // Either app in a split pair is sufficient to check whether its window is leaving.
+        RemoteAnimationTarget runningTaskTarget = mRecentsAnimationTargets == null ? null
+                : mRecentsAnimationTargets.findTask(mGestureState.getTopRunningTaskId());
+        if (runningTaskTarget != null && isNotInRecents(runningTaskTarget)) {
+            return true;
+        }
+        // Arming a small-window drag must not expose sibling cards before overview intent.
+        return mHasMotionEverBeenPaused || mIsLikelyToStartNewTask;
     }
 
     /**
@@ -1111,13 +1113,10 @@ public abstract class AbsSwipeUpHandler<
 
     private void updateSmallWindowContentAlpha() {
         if (mRecentsView == null) return;
+        boolean showOverview = shouldAttachRecentsToAppWindow();
         if (mSmallWindowSwipe != null) {
-            mSmallWindowSwipe.updateRecentsView(mRecentsView);
+            mSmallWindowSwipe.updateRecentsView(mRecentsView, showOverview);
         } else if (mAppAnimationHandoff != null) {
-            GestureEndTarget endTarget = mGestureState.getEndTarget();
-            boolean showOverview = endTarget == RECENTS || endTarget == NEW_TASK
-                    || (endTarget == null && (mHasMotionEverBeenPaused
-                            || mIsLikelyToStartNewTask));
             // Catching an opening app is still a window gesture. Show sibling cards only
             // after a pause/quick switch, not while the interrupted app is returning Home.
             mRecentsView.setSmallWindowPreviewAlpha(!showOverview, showOverview ? 1f : 0f);
@@ -1814,34 +1813,9 @@ public abstract class AbsSwipeUpHandler<
         if (endTarget != HOME && !mSmallWindowCommitted && mSplitTaskFromSwipe == -1
                 && mSmallWindowSwipe != null
                 && mSmallWindowSwipe.hasActiveTransform()) {
-            mSmallWindowSettling = true;
-            final com.android.quickstep.util.SmallWindowSwipePreview preview = mSmallWindowSwipe;
-            // The normal attach animation will hide cards when returning to an app. Fading
-            // them here would flash them back in when the preview mask is cleared.
-            preview.beginRelease(false, endTarget.recentsAttachedToAppWindow);
-            final ValueAnimator rollback = ValueAnimator.ofFloat(0f, 1f);
-            rollback.setDuration(180);
-            rollback.addUpdateListener(anim -> {
-                if (mSmallWindowSwipe != preview) return;
-                preview.progress = (float) anim.getAnimatedValue();
-                preview.apply();
-                updateSmallWindowContentAlpha();
-            });
-            rollback.addListener(new AnimationSuccessListener() {
-                @Override
-                public void onAnimationSuccess(Animator animation) {
-                    if (mSmallWindowSwipe != preview) return;
-                    clearSmallWindowSwipe();
-                    if (mRecentsAnimationController != null && !mCanceled
-                            && !mStateCallback.hasStates(STATE_HANDLER_INVALIDATED)) {
-                        // Keep the finger-up decision while the page and preview settle.
-                        finishNormalGestureEnd(endTarget, false, new PointF());
-                    }
-                }
-            });
-            mRunningWindowAnim = new RunningWindowAnim[]{RunningWindowAnim.wrap(rollback)};
-            rollback.start();
-            return;
+            // Settle from the held frame on the normal gesture timeline. A separate rollback
+            // to the old overview pose introduces a stop before the actual page animation.
+            mSmallWindowSwipe.beginGestureRelease(endTarget.recentsAttachedToAppWindow);
         }
         finishNormalGestureEnd(endTarget, isFling, velocityPxPerMs);
     }
@@ -1878,7 +1852,9 @@ public abstract class AbsSwipeUpHandler<
                     mHomeSwipeSizeVelocity = mSmallWindowSwipe.getSizeVelocity();
                 }
             }
-            clearSmallWindowSwipe(endTarget == HOME);
+            if (mSmallWindowSwipe == null || !mSmallWindowSwipe.isGestureRelease()) {
+                clearSmallWindowSwipe(endTarget == HOME);
+            }
         }
         long duration = MAX_SWIPE_DURATION;
         float currentShift = mCurrentShift.value;
@@ -2122,6 +2098,10 @@ public abstract class AbsSwipeUpHandler<
             // return to the app needs a real timeline even though the swipe shift is zero.
             duration = DesktopAnimationSettings.read(mContext).openDuration;
         }
+        if (mSmallWindowSwipe != null && mSmallWindowSwipe.isGestureRelease()) {
+            // The shift may already be at its endpoint while the held window is still small.
+            duration = Math.max(duration, RECENTS_ATTACH_DURATION);
+        }
         maybeUpdateRecentsAttachedState();
 
         // If we are transitioning to launcher, then listen for the activity to be restarted while
@@ -2351,7 +2331,7 @@ public abstract class AbsSwipeUpHandler<
                 animatorSet.play(goingUpAnim);
                 animatorSet.play(goingDownAnim).after(goingUpAnim);
             }
-            addAppLaunchHandoffAnimation(animatorSet, duration, interpolator);
+            addWindowHandoffAnimation(animatorSet, duration, interpolator);
             animatorSet.addListener(successListener);
             animatorSet.setInterpolator(interpolator);
             animatorSet.start();
@@ -2362,6 +2342,7 @@ public abstract class AbsSwipeUpHandler<
             windowAnim.addUpdateListener(valueAnimator -> {
                 computeRecentsScrollIfInvisible();
             });
+            addWindowHandoffAnimation(animatorSet, duration, interpolator);
             animatorSet.addListener(new AnimationSuccessListener() {
                 @Override
                 public void onAnimationSuccess(Animator animator) {
@@ -2393,7 +2374,6 @@ public abstract class AbsSwipeUpHandler<
                     mGestureState.setState(STATE_END_TARGET_ANIMATION_FINISHED);
                 }
             });
-            addAppLaunchHandoffAnimation(animatorSet, duration, interpolator);
             animatorSet.play(windowAnim);
             if (mRecentsView != null) {
                 mRecentsView.onPrepareGestureEndAnimation(
@@ -2415,20 +2395,45 @@ public abstract class AbsSwipeUpHandler<
         return false;
     }
 
-    private void addAppLaunchHandoffAnimation(AnimatorSet animation, long duration,
+    private void addWindowHandoffAnimation(AnimatorSet animation, long duration,
             Interpolator interpolator) {
-        if (!hasAppLaunchHandoff()) return;
+        final com.android.quickstep.util.SmallWindowSwipePreview preview = mSmallWindowSwipe;
+        final boolean releasePreview = preview != null && preview.isGestureRelease();
+        final boolean releaseAppLaunch = hasAppLaunchHandoff();
+        if (!releasePreview && !releaseAppLaunch) return;
         ValueAnimator settle = ValueAnimator.ofFloat(0f, 1f);
         settle.setDuration(duration);
         settle.setInterpolator(interpolator);
         settle.addUpdateListener(animator -> {
-            for (RemoteTargetHandle handle : mRemoteTargetHandles) {
-                handle.getTaskViewSimulator().setAppLaunchHandoffProgress(
-                        (float) animator.getAnimatedValue());
+            if (mCanceled || mStateCallback.hasStates(STATE_HANDLER_INVALIDATED)) return;
+            float progress = Utilities.boundToRange((float) animator.getAnimatedValue(), 0f, 1f);
+            if (releasePreview && mSmallWindowSwipe == preview) {
+                preview.progress = progress;
+            }
+            if (releaseAppLaunch) {
+                for (RemoteTargetHandle handle : mRemoteTargetHandles) {
+                    handle.getTaskViewSimulator().setAppLaunchHandoffProgress(progress);
+                }
             }
             applyScrollAndTransform();
+            updateSmallWindowContentAlpha();
         });
         animation.play(settle);
+        if (releasePreview) {
+            animation.addListener(new AnimationSuccessListener() {
+                @Override
+                public void onAnimationSuccess(Animator animator) {
+                    if (mSmallWindowSwipe != preview || mCanceled
+                            || mStateCallback.hasStates(STATE_HANDLER_INVALIDATED)) return;
+                    // Resolve against the final page layout before removing the preview hook.
+                    preview.progress = 1f;
+                    applyScrollAndTransform();
+                    updateSmallWindowContentAlpha();
+                    clearSmallWindowSwipe();
+                    applyScrollAndTransform();
+                }
+            });
+        }
     }
 
     private void handOffAnimation(PointF velocityPxPerMs) {

@@ -54,7 +54,13 @@ final class FullScreenFolderAnimationManager implements FolderAnimationCreator {
         Rect source = new Rect();
         float sourceScale = dragLayer.getDescendantRectRelativeToSelf(icon, source);
         Rect preview = new Rect();
-        icon.getPreviewBounds(preview);
+        if (icon.usesLargePreview()) {
+            icon.getPreviewBounds(preview);
+        } else {
+            // getPreviewBounds also includes icons protruding beyond the compact circle.
+            // The closing backdrop must match the actual background that replaces it.
+            icon.getCompactPreviewBounds(preview);
+        }
         RectF surface = new RectF(source.left + preview.left * sourceScale,
                 source.top + preview.top * sourceScale, source.left + preview.right * sourceScale,
                 source.top + preview.bottom * sourceScale);
@@ -116,9 +122,18 @@ final class FullScreenFolderAnimationManager implements FolderAnimationCreator {
             set.play(text);
         }
 
+        float[] closingTravel = {0f};
         focus.addUpdateListener(animation -> {
             float fraction = animation.getAnimatedFraction();
             float travel = fraction >= 1f ? 1f : spring.getInterpolatedValue(fraction);
+            if (!opening) {
+                // The background stops at the closed preview, so its icons must stop there
+                // too. Spring overshoot otherwise crosses their tiny slots, then rebounds
+                // just before the static FolderIcon takes over.
+                closingTravel[0] = Math.max(closingTravel[0],
+                        Utilities.boundToRange(travel, 0f, 1f));
+                travel = closingTravel[0];
+            }
             float sourceScaleNow = dragLayer.getDescendantRectRelativeToSelf(icon, source);
             surface.set(source.left + preview.left * sourceScaleNow,
                     source.top + preview.top * sourceScaleNow,
@@ -165,22 +180,28 @@ final class FullScreenFolderAnimationManager implements FolderAnimationCreator {
                 }
                 if (mCancelled) return;
                 mFolder.setExpansionProgress(opening ? 1 : 0);
-                mFolder.mFooter.setTranslationY(0);
-                mFolder.mFooter.setAlpha(1);
-                mFolder.getPageControls().setAlpha(1);
-                for (View item : items) {
-                    item.setTranslationX(0);
-                    item.setTranslationY(0);
-                    item.setScaleX(1);
-                    item.setScaleY(1);
-                    item.setAlpha(1);
-                    BubbleTextView label = item instanceof BubbleTextView text ? text
-                            : ((AppPairIcon) item).getTitleTextView();
-                    label.setTextVisibility(true);
-                }
+                // Closing labels must stay hidden until Folder removes this view. Restoring
+                // them here can expose full-size titles over the compact preview for a frame.
+                if (opening) resetContent(mFolder);
             }
         });
         return set;
+    }
+
+    static void resetContent(Folder folder) {
+        folder.mFooter.setTranslationY(0);
+        folder.mFooter.setAlpha(1);
+        folder.getPageControls().setAlpha(1);
+        for (View item : folder.getIconsInReadingOrder()) {
+            item.setTranslationX(0);
+            item.setTranslationY(0);
+            item.setScaleX(1);
+            item.setScaleY(1);
+            item.setAlpha(1);
+            BubbleTextView label = item instanceof BubbleTextView text ? text
+                    : ((AppPairIcon) item).getTitleTextView();
+            label.setTextVisibility(true);
+        }
     }
 
     private static void play(AnimatorSet set, View view,

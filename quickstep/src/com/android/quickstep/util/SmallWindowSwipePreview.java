@@ -78,6 +78,7 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
     private final Matrix mMatrix = new Matrix();
     private final Matrix mReleaseMatrix = new Matrix();
     private final Rect mCrop = new Rect();
+    private final Rect mReleaseCrop = new Rect();
     private final RectF mNormal = new RectF();
     private final RectF mCurrent = new RectF();
     private final RectF mSafeDisplay = new RectF();
@@ -92,6 +93,7 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
     private final Targets mTargets;
     private final int[] mHostLocation = new int[2];
     private final float[] mMatrixValues = new float[9];
+    private final float[] mReleaseMatrixValues = new float[9];
     private float mPointerX;
     private float mPointerY;
     private float mFollowProgress;
@@ -110,6 +112,7 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
     private float mNormalRadius;
     private float mRadius;
     private float mReleaseRadius;
+    private float mReleaseVisibleRadius;
     private float mSplitReveal;
     private float mWindowReveal;
     private float mRequestedSplitReveal;
@@ -123,6 +126,7 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
     private boolean mTransformDetached;
     private ValueAnimator mTargetFade;
     private boolean mReleasing;
+    private boolean mReleasingToGesture;
     private boolean mToSmallWindow;
     private boolean mShowRecentsOnRelease;
     private int mTarget;
@@ -185,6 +189,10 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
 
     public boolean hasActiveTransform() {
         return mFollowProgress > 0f && !mCurrent.isEmpty();
+    }
+
+    public boolean isGestureRelease() {
+        return mReleasingToGesture && !mClosed;
     }
 
     public RectF getCurrentBounds() {
@@ -258,17 +266,20 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
     }
 
     /** Move every overview card in the same coordinate space as the live foreground app. */
-    public void updateRecentsView(RecentsView<?, ?> recents) {
+    public void updateRecentsView(RecentsView<?, ?> recents, boolean showRecents) {
         updateRecentsBounds();
         recents.setSmallWindowPreviewTransform(mNormal, mRecentsBounds,
                 mFollowProgress * (mReleasing ? 1f - progress : 1f), getRecentsRetreat(),
                 mReleasing && mShowRecentsOnRelease ? progress : 0f);
-        recents.setSmallWindowPreviewAlpha(true, getRecentsAlpha());
+        // Keep this mask aligned with the attach decision. Target spring updates must not
+        // reveal cards that the gesture is still keeping behind the app.
+        recents.setSmallWindowPreviewAlpha(true, showRecents ? getRecentsAlpha() : 0f);
     }
 
     private void updateRecentsBounds() {
         if (mReleasing) {
-            interpolate(mReleaseRecentsBounds, mReleaseEnd, progress, mRecentsBounds);
+            interpolate(mReleaseRecentsBounds, mReleasingToGesture ? mNormal : mReleaseEnd,
+                    progress, mRecentsBounds);
         } else if (!mCurrent.isEmpty() && mMaterialPositionInitialized) {
             // The material spring can still hold the fullscreen width after the app shrinks.
             // Let neighbors trail its position without briefly growing larger than the app.
@@ -408,7 +419,8 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
     @Override
     public void onBuildTargetParams(SurfaceProperties builder, RemoteAnimationTarget app,
             TransformParams params) {
-        if (app.taskId != mTask.taskId || app.leash != mTask.leash || mReleasing || mClosed) return;
+        if (app.taskId != mTask.taskId || app.leash != mTask.leash || mClosed
+                || (mReleasing && !mReleasingToGesture)) return;
         final TaskViewSimulator simulator = mHandle.getTaskViewSimulator();
         mNormalMatrix.set(simulator.getCurrentMatrix());
         mNormal.set(simulator.getCurrentCropRect());
@@ -416,6 +428,30 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
         mNormalMatrix.mapRect(mNormal);
         mNormalRadius = simulator.getCurrentCornerRadius();
         if (mNormal.isEmpty()) return;
+
+        if (mReleasingToGesture) {
+            // The destination keeps following overview scale, scroll and stack changes.
+            // Blend crop and matrix together so the first frame is exactly the held window
+            // and the last frame is exactly the live task, including interrupted launches.
+            mNormalMatrix.getValues(mMatrixValues);
+            for (int i = 0; i < mMatrixValues.length; i++) {
+                mMatrixValues[i] = Utilities.mapRange(progress,
+                        mReleaseMatrixValues[i], mMatrixValues[i]);
+            }
+            mMatrix.setValues(mMatrixValues);
+            mCrop.set(Math.round(Utilities.mapRange(progress, mReleaseCrop.left, mCrop.left)),
+                    Math.round(Utilities.mapRange(progress, mReleaseCrop.top, mCrop.top)),
+                    Math.round(Utilities.mapRange(progress, mReleaseCrop.right, mCrop.right)),
+                    Math.round(Utilities.mapRange(progress, mReleaseCrop.bottom, mCrop.bottom)));
+            mCurrent.set(mCrop);
+            mMatrix.mapRect(mCurrent);
+            mRadius = surfaceRadius(Utilities.mapRange(progress, mReleaseVisibleRadius,
+                    mNormalRadius * mNormalMatrix.mapRadius(1f)));
+            builder.setMatrix(mMatrix).setWindowCrop(mCrop).setCornerRadius(mRadius);
+            mTargets.update();
+            mOnVisualUpdate.run();
+            return;
+        }
 
         mCurrent.set(mNormal);
         if (mFollowProgress > 0f) {
@@ -469,6 +505,7 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
         updateRecentsBounds();
         mReleaseRecentsBounds.set(mRecentsBounds);
         mReleasing = true;
+        mReleasingToGesture = false;
         mToSmallWindow = toSmallWindow;
         mShowRecentsOnRelease = showRecents;
         stopTargetSprings();
@@ -477,12 +514,22 @@ public final class SmallWindowSwipePreview implements TransformParams.BuilderPro
         if (toSmallWindow) mReleaseEnd.set(mDestination);
         else mReleaseEnd.set(mNormal);
         mReleaseMatrix.set(mMatrix);
+        mReleaseMatrix.getValues(mReleaseMatrixValues);
+        mReleaseCrop.set(mCrop);
         mReleaseRadius = mRadius;
+        mReleaseVisibleRadius = getVisibleCornerRadius();
         progress = 0f;
     }
 
+    /** Return to the live gesture layout without a separate rollback to a frozen pose. */
+    public void beginGestureRelease(boolean showRecents) {
+        beginRelease(false, showRecents);
+        mReleasingToGesture = true;
+    }
+
     public void apply() {
-        if (!mReleasing || mClosed || !mTask.leash.isValid() || mReleaseStart.isEmpty()) return;
+        if (!mReleasing || mReleasingToGesture || mClosed
+                || !mTask.leash.isValid() || mReleaseStart.isEmpty()) return;
         interpolate(mReleaseStart, mReleaseEnd, progress, mCurrent);
         transform(mReleaseMatrix, mReleaseStart, mCurrent);
         float endRadius = mToSmallWindow ? surfaceRadius(mDestinationRadius) : mNormalRadius;

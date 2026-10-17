@@ -1,4 +1,5 @@
 /*
+ * Modified by the ArkUI Project in 2026 to fade label shadows with their text.
  * Copyright (C) 2008 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -205,6 +206,10 @@ public class BubbleTextView extends TextView implements ItemInfoUpdateReceiver,
     private ColorStateList mTextColorStateList;
     @ViewDebug.ExportedProperty(category = "launcher")
     private float mTextAlpha = 1;
+    private float mTextShadowRadius;
+    private float mTextShadowDx;
+    private float mTextShadowDy;
+    private int mTextShadowColor;
 
     @ViewDebug.ExportedProperty(category = "launcher")
     private DotInfo mDotInfo;
@@ -1139,12 +1144,32 @@ public class BubbleTextView extends TextView implements ItemInfoUpdateReceiver,
         setTextAlpha(visible ? 1 : 0);
     }
 
+    @Override
+    public void setShadowLayer(float radius, float dx, float dy, int color) {
+        // Preserve the unfaded style when a folder or theme updates the label shadow.
+        mTextShadowRadius = radius;
+        mTextShadowDx = dx;
+        mTextShadowDy = dy;
+        mTextShadowColor = color;
+        updateTextShadow();
+    }
+
+    private void updateTextShadow() {
+        super.setShadowLayer(mTextShadowRadius, mTextShadowDx, mTextShadowDy,
+                setColorAlphaBound(mTextShadowColor,
+                        Math.round(Color.alpha(mTextShadowColor) * mTextAlpha)));
+    }
+
     private void setTextAlpha(float alpha) {
         mTextAlpha = alpha;
         if (mTextColorStateList != null) {
             setTextColor(mTextColorStateList);
         } else {
             super.setTextColor(getModifiedColor());
+        }
+        if (mTextShadowRadius > 0f) {
+            // Transparent glyphs can still cast a visible TextView shadow.
+            updateTextShadow();
         }
     }
 

@@ -1119,14 +1119,16 @@ public class Folder extends AbstractFloatingView implements ClipPathView, DragSo
     }
 
     private void closeComplete(boolean wasAnimated) {
-        if (usesFullScreenPresentation()) {
-            setExpansionProgress(0);
-            mFolderIcon.mFolderName.setAlpha(1);
-        }
         // TODO: Clear all active animations.
         BaseDragLayer parent = (BaseDragLayer) getParent();
         if (parent != null) {
             parent.removeView(this);
+        }
+        if (usesFullScreenPresentation()) {
+            // Restore names and reusable child views only after the closing layer is gone.
+            setExpansionProgress(0);
+            FullScreenFolderAnimationManager.resetContent(this);
+            mFolderIcon.mFolderName.setAlpha(1);
         }
         mActivityContext.getDragController().removeDropTarget(this);
         clearFocus();
@@ -1136,7 +1138,10 @@ public class Folder extends AbstractFloatingView implements ClipPathView, DragSo
             mFolderIcon.mFolderName.setTextVisibility(true);
             if (wasAnimated) {
                 mFolderIcon.animateBgShadowAndStroke();
-                mFolderIcon.onFolderClose(mContent.getCurrentPage());
+                // Fullscreen closing already lands on the static preview. Replaying the
+                // legacy current-page slide would briefly replace those icons after landing.
+                mFolderIcon.onFolderClose(usesFullScreenPresentation()
+                        ? 0 : mContent.getCurrentPage());
                 if (mFolderIcon.hasDot()) {
                     mFolderIcon.animateDotScale(0f, 1f);
                 }

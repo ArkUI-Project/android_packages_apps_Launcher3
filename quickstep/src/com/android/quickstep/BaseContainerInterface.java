@@ -1,4 +1,5 @@
 /*
+ * Modified by the ArkUI Project in 2026 for continuous gesture overview reveal.
  * Copyright (C) 2024 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -180,7 +181,9 @@ public abstract class BaseContainerInterface<STATE_TYPE extends BaseState<STATE_
             long animationDuration = animate ? RECENTS_ATTACH_DURATION : 0;
             Animator fadeAnim = container.getStateManager()
                     .createStateElementAnimation(INDEX_RECENTS_FADE_ANIM, attached ? 1f : 0f);
-            fadeAnim.setInterpolator(attached ? INSTANT : ACCELERATE_2);
+            // A pause can attach recents after the app has already shrunk. Revealing every
+            // card instantly then exposes the still-detached layout for the first frame.
+            fadeAnim.setInterpolator(attached ? LINEAR : ACCELERATE_2);
             fadeAnim.setDuration(animationDuration);
             animatorSet.play(fadeAnim);
 
